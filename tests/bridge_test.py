@@ -305,7 +305,7 @@ extra_checks = [
     ("stations", [(x["name"], x.get("waitingTotal"), x["terminals"], x["town"], x["usagePct"]) for x in st["stations"]]
                  == [("Central", 42, 2, "Springfield", 30.0), ('Harbour "Pier" \\ 1\nb', 0, 1, "Zürich", 30.0)]
                  and st["stations"][0]["longWaits"] == ["PASSENGERS"] and st["stations"][0]["lines"] == ["Line A"]
-                 and [x["kind"] for x in st["stations"]] == ["passenger", "mixed"]),
+                 and [x["kind"] for x in st["stations"]] == ["passenger", "passenger"]),
     ("depots", dep["depots"] == [{"id": 800, "name": "Bus Depot", "carrier": "ROAD", "position": {"x": 1100, "y": 2100},
                                   "vehiclesInside": 2, "nearestTown": {"name": "Springfield", "distanceKm": 0.1}}]),
     ("finances", fin["balance"] == 9999999 and fin["loan"] == 250000 and fin["earningsThisYear"] == 777

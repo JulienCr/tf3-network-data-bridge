@@ -21,7 +21,7 @@ import sys
 import time
 
 SERVER_NAME = "tf3-mcp-bridge"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.2.1"
 APP_ID = "3493540"
 EXCHANGE_DIRS = ("recordings", "keyframes", "mod_presets")
 PREFIX = "mcp_bridge__"
@@ -869,13 +869,38 @@ def tool_list_industries(args):
     return out
 
 
+def line_cargos():
+    """Line id -> cargo names it carries (from the snapshot), or {} when unavailable."""
+    try:
+        snap, _, _ = load_snapshot()
+    except Exception:
+        return {}
+    return {l.get("id"): set(l.get("cargos") or []) for l in snap.get("lines", [])}
+
+
+def station_kind(st, cargos_by_line):
+    """passenger / cargo / mixed from what the stopping lines carry; terminal flags when no line stops there
+    (road and tram stops accept cargo by default, so their flags alone say "mixed")."""
+    carried = set()
+    for l in st.get("lines") or []:
+        carried |= cargos_by_line.get(l.get("id"), set())
+    if not carried:
+        return st.get("kind")
+    has_pax = "PASSENGERS" in carried
+    if has_pax and len(carried) > 1:
+        return "mixed"
+    return "passenger" if has_pax else "cargo"
+
+
 def tool_list_stations(args):
     data, warning, age = load_kind("stations")
+    cargos_by_line = line_cargos()
     rows = []
     kind = (args.get("kind") or "").lower()
     town = (args.get("town") or "").lower()
     query = (args.get("name_contains") or "").lower()
     for st in data.get("stations") or []:
+        st = dict(st, kind=station_kind(st, cargos_by_line))
         if kind and st.get("kind") != kind:
             continue
         if town and town not in (st.get("town") or "").lower():
@@ -908,20 +933,42 @@ def tool_list_stations(args):
     return out
 
 
+DEPOT_WORDS = [("ship", "WATER"), ("harbo", "WATER"), ("port", "WATER"), ("tram", "TRAM"), ("train", "RAIL"),
+               ("rail", "RAIL"), ("air", "AIR"), ("hangar", "AIR"), ("heli", "AIR"), ("road", "ROAD"),
+               ("bus", "ROAD"), ("truck", "ROAD")]
+
+
+def depot_carrier(d):
+    """The game does not expose a depot's carrier to scripts in this build; fall back to its name."""
+    if d.get("carrier"):
+        return d["carrier"], None
+    name = (d.get("name") or "").lower()
+    if "maintenance" in name:
+        return None, "maintenance building"
+    for word, carrier in DEPOT_WORDS:
+        if word in name:
+            return carrier, None
+    return None, None
+
+
 def tool_list_depots(args):
     data, warning, age = load_kind("stations")
     towns = town_positions()
     carrier = (args.get("carrier") or "").upper()
     rows = []
     for d in data.get("depots") or []:
-        if carrier and d.get("carrier") != carrier:
-            continue
         row = dict(d)
+        row["carrier"], kind = depot_carrier(d)
+        if kind:
+            row["kind"] = kind
+        if carrier and row.get("carrier") != carrier:
+            continue
         row["nearestTown"] = nearest_town(d.get("position"), towns)
         rows.append(compact(row))
     rows.sort(key=lambda r: ((r.get("carrier") or ""), (r.get("name") or "").lower()))
     out = {"totalMatching": len(rows), "depots": rows,
-           "notes": "Your depots with carrier, position (world metres), vehicles parked inside and the nearest town."}
+           "notes": "Your depots with carrier (from the depot's name when the game does not report it), position "
+                    "(world metres), vehicles parked inside and the nearest town. Maintenance buildings are marked."}
     out.update(freshness(warning, age))
     return out
 
