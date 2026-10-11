@@ -9,9 +9,9 @@ It has two parts:
 
 - **The game mod** "AI Assistant Bridge (MCP)", on mod.io. It answers requests with live data from your game and
   does nothing between requests. It is **read-only**: it never changes your game and makes no network connections.
-- **A small MCP server**, `server/tf3_mcp_server.py`. It's one Python file that uses only the standard library, and
-  it's included in the mod download. Your AI app runs it and it asks the game for data whenever the assistant needs
-  it.
+- **A small MCP server**, `server/tf3_mcp_server.py`. It's one Python file that uses only the standard library,
+  downloaded from this repository's releases. (mod.io doesn't allow `.py` files in mods.) Your AI app runs it and it
+  asks the game for data whenever the assistant needs it.
 
 ## What the assistant can see
 
@@ -28,19 +28,21 @@ as the [Claude desktop app](https://claude.ai/download) or Claude Code.
 
 1. **Subscribe** to the mod on mod.io. Then in the game, enable **AI Assistant Bridge (MCP)** for your save. You can
    add it to an existing save and remove it again later.
-2. **Register the server with your AI app.** Open a terminal and run the setup command on the server file inside
-   the mod folder:
+2. **Download the server and register it with your AI app.** Paste this into PowerShell:
 
+   ```powershell
+   $d="$env:LOCALAPPDATA\tf3-mcp"; mkdir $d -Force >$null; iwr https://github.com/bsaurusrex/tf3-ai-assistant-bridge/releases/latest/download/tf3_mcp_server.py -OutFile "$d\tf3_mcp_server.py"; py "$d\tf3_mcp_server.py" --setup
    ```
-   py "C:\Users\Public\mod.io\10640\mods\<mod id>\server\tf3_mcp_server.py" --setup
-   ```
 
-   If you have trouble finding the folder, download `server/tf3_mcp_server.py` from this repository instead and run
-   the same command on that copy.
+   This saves the server from the [latest release](https://github.com/bsaurusrex/tf3-ai-assistant-bridge/releases/latest) to `%LOCALAPPDATA%\tf3-mcp\`, then
+   runs its `--setup` command. Setup adds a server called `tf3` to the Claude desktop app's config, backing up your
+   existing config first and keeping your other servers. If Claude Code is installed, it registers the server there
+   too, for all folders. For any other MCP app, it prints the config entry for you to paste in. To update the
+   server later, run the same line again.
 
-   `--setup` adds a server called `tf3` to the Claude desktop app's config. It backs up your existing config first
-   and keeps your other servers. If Claude Code is installed, it registers the server there too, for all folders.
-   For any other MCP app, the command prints the config entry for you to paste in.
+   If you'd rather do it by hand, download `tf3_mcp_server.py` from the release, save it anywhere and run
+   `py tf3_mcp_server.py --setup` in that folder.
+
 3. **Restart the Claude desktop app** by quitting it from the system tray and opening it again. Closing the window
    isn't enough.
 4. **Load your save**, then ask a question.
