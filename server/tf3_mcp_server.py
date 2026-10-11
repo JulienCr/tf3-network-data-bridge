@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Transport Fever 3 MCP server (read-only).
 
-Asks the "AI Assistant Bridge (MCP)" game mod for live data and exposes it as MCP tools over stdio, so an AI
+Asks the "Network Data Bridge (MCP)" game mod for live data and exposes it as MCP tools over stdio, so an AI
 assistant can look at your lines, vehicles, towns and the vehicle models you can buy. Standard library only.
 
 The game's Lua cannot open sockets or files directly, so the exchange goes through the game's userdata files, in a
@@ -21,7 +21,7 @@ import sys
 import time
 
 SERVER_NAME = "tf3-mcp-bridge"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.1.1"
 APP_ID = "3493540"
 EXCHANGE_DIRS = ("recordings", "keyframes", "mod_presets")
 PREFIX = "mcp_bridge__"
@@ -87,7 +87,7 @@ def bridge_dir():
                 found.append((os.path.getmtime(hellos[0]), folder))
     if not found:
         raise RuntimeError(
-            "The game has not been connected yet: start Transport Fever 3, enable the mod 'AI Assistant Bridge (MCP)' "
+            "The game has not been connected yet: start Transport Fever 3, enable the mod 'Network Data Bridge (MCP)' "
             "for your save and load it. Searched: " + "; ".join(userdata_dirs() or ["(no Steam user data found)"]))
     found.sort(reverse=True)
     return found[0][1]

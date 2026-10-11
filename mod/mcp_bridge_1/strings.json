@@ -1,7 +1,7 @@
 {
 	"en": {
 		"param_budget_name": "CPU per frame",
-		"param_budget_tooltip": "Time spent collecting data each frame while answering the AI assistant. Light never causes stutter; Fast answers big networks sooner.",
+		"param_budget_tooltip": "Time spent collecting data each frame while answering a request. Light never causes stutter; Fast answers big networks sooner.",
 		"param_budget_light": "Light",
 		"param_budget_normal": "Normal",
 		"param_budget_fast": "Fast",
