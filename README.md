@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="AI Assistant Bridge" width="640"></p>
+
 # AI Assistant Bridge (MCP) for Transport Fever 3
 
 Ask an AI assistant such as Claude about your running game: *"Which lines lose money?"*, *"Which trains are past
