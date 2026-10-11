@@ -33,10 +33,10 @@ supports MCP servers.
 2. **Download the server and register it with your AI app.** Paste this into PowerShell:
 
    ```powershell
-   $d="$env:LOCALAPPDATA\tf3-mcp"; mkdir $d -Force >$null; iwr https://github.com/bsaurusrex/tf3-ai-assistant-bridge/releases/latest/download/tf3_mcp_server.py -OutFile "$d\tf3_mcp_server.py"; py "$d\tf3_mcp_server.py" --setup
+   $d="$env:LOCALAPPDATA\tf3-mcp"; mkdir $d -Force >$null; iwr https://github.com/bsaurusrex/tf3-network-data-bridge/releases/latest/download/tf3_mcp_server.py -OutFile "$d\tf3_mcp_server.py"; py "$d\tf3_mcp_server.py" --setup
    ```
 
-   This saves the server from the [latest release](https://github.com/bsaurusrex/tf3-ai-assistant-bridge/releases/latest) to `%LOCALAPPDATA%\tf3-mcp\`, then
+   This saves the server from the [latest release](https://github.com/bsaurusrex/tf3-network-data-bridge/releases/latest) to `%LOCALAPPDATA%\tf3-mcp\`, then
    runs its `--setup` command, which adds a server called `tf3` to the apps it can configure automatically (currently
    the Claude desktop app and Claude Code). It backs up the existing config first and keeps your other servers. For
    any other MCP app, it prints the config entry for you to paste into that app's MCP settings. To update the server
