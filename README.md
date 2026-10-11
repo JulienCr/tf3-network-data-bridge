@@ -2,8 +2,10 @@
 
 # AI Assistant Bridge (MCP) for Transport Fever 3
 
-Ask an AI assistant such as Claude about your running game: *"Which lines lose money?"*, *"Which trains are past
-their lifespan, and what should replace them?"*, *"Which big towns have no rail service?"*
+Ask questions about your running game from any AI chat app that supports the Model Context Protocol (MCP):
+*"Which lines lose money?"*, *"Which trains are past their lifespan, and what should replace them?"*, *"Which big
+towns have no rail service?"* The app answers with live numbers from your game. The mod only shares data: it adds
+no AI-generated content and changes nothing in the game.
 
 It has two parts:
 
@@ -11,9 +13,9 @@ It has two parts:
   does nothing between requests. It is **read-only**: it never changes your game and makes no network connections.
 - **A small MCP server**, `server/tf3_mcp_server.py`. It's one Python file that uses only the standard library,
   downloaded from this repository's releases. (mod.io doesn't allow `.py` files in mods.) Your AI app runs it and it
-  asks the game for data whenever the assistant needs it.
+  asks the game for data whenever the app needs it.
 
-## What the assistant can see
+## What the AI app can see
 
 - **Lines:** stops and their towns, vehicles, capacity usage, 12-month profit, profit per vehicle, running costs and
   problems.
@@ -23,8 +25,8 @@ It has two parts:
 
 ## Setup
 
-You need Transport Fever 3 on Windows, [Python 3.8 or newer](https://www.python.org/downloads/) and an MCP app such
-as the [Claude desktop app](https://claude.ai/download) or Claude Code.
+You need Transport Fever 3 on Windows, [Python 3.8 or newer](https://www.python.org/downloads/) and an AI app that
+supports MCP servers.
 
 1. **Subscribe** to [the mod on mod.io](https://mod.io/g/transportfever3/m/ai-assistant-bridge-mcp) (or find "AI Assistant Bridge (MCP)" in the in-game Mod Hub). Then in the game, enable **AI Assistant Bridge (MCP)** for your save. You can
    add it to an existing save and remove it again later.
@@ -35,16 +37,16 @@ as the [Claude desktop app](https://claude.ai/download) or Claude Code.
    ```
 
    This saves the server from the [latest release](https://github.com/bsaurusrex/tf3-ai-assistant-bridge/releases/latest) to `%LOCALAPPDATA%\tf3-mcp\`, then
-   runs its `--setup` command. Setup adds a server called `tf3` to the Claude desktop app's config, backing up your
-   existing config first and keeping your other servers. If Claude Code is installed, it registers the server there
-   too, for all folders. For any other MCP app, it prints the config entry for you to paste in. To update the
-   server later, run the same line again.
+   runs its `--setup` command, which adds a server called `tf3` to the apps it can configure automatically (currently
+   the Claude desktop app and Claude Code). It backs up the existing config first and keeps your other servers. For
+   any other MCP app, it prints the config entry for you to paste into that app's MCP settings. To update the server
+   later, run the same line again.
 
    If you'd rather do it by hand, download `tf3_mcp_server.py` from the release, save it anywhere and run
    `py tf3_mcp_server.py --setup` in that folder.
 
-3. **Restart the Claude desktop app** by quitting it from the system tray and opening it again. Closing the window
-   isn't enough.
+3. **Restart your AI app** so it starts the server. Some desktop apps keep running in the system tray after you close
+   the window, so quit them from the tray.
 4. **Load your save**, then ask a question.
 
 For a quick check without an AI app, run
