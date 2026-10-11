@@ -114,6 +114,13 @@ end
 -- requests and answers
 
 local function init()
+	-- the MCP server runs on a PC next to the game; on consoles there is nothing to answer
+	local okC, console = pcall(function() return api.util.isConsoleMode() end)
+	if okC and console then
+		say("console detected; the bridge is off (it needs the MCP server on a PC)")
+		G.phase = "off"
+		return
+	end
 	local dir, stamp = findDir()
 	local err = stamp
 	if dir == nil then
