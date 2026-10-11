@@ -62,7 +62,8 @@ app = {
 -- native-vector imitation (1-based :size()/:at())
 local function vec(t) return setmetatable({}, { __index = { size = function() return #t end, at = function(_, i) return t[i] end } }) end
 
-local CT = { NAME=1, LINE=2, TRANSPORT_VEHICLE=3, GAME_TIME=4, GAME_SPEED=5, LOG_BOOK=6, STATION_GROUP=7, TOWN=8 }
+local CT = { NAME=1, LINE=2, TRANSPORT_VEHICLE=3, GAME_TIME=4, GAME_SPEED=5, LOG_BOOK=6, STATION_GROUP=7, TOWN=8,
+  BOUNDING_VOLUME=9, TOWN_BUILDING=10 }
 local comps = {
   [1] = { [CT.GAME_TIME] = { gameTime = 5000000 }, [CT.GAME_SPEED] = { speedup = 1, millisPerDay = 2000 } },
   [100] = { [CT.NAME] = { name = "Line A" }, [CT.LINE] = { stops = vec({ { stationGroup = 500 }, { stationGroup = 501 } }),
@@ -73,6 +74,11 @@ local comps = {
   [501] = { [CT.NAME] = { name = 'Harbour "Pier" \\ 1\nb' }, [CT.STATION_GROUP] = { stations = { 601 } } },
   [900] = { [CT.NAME] = { name = "Springfield" }, [CT.TOWN] = { developmentActive = true } },
   [901] = { [CT.NAME] = { name = "Zürich" }, [CT.TOWN] = { developmentActive = false } },
+  -- town buildings: Springfield's centre is (1050, 2000); Zürich's box sits on the building's construction (21050, 2000)
+  [1000] = { [CT.BOUNDING_VOLUME] = { bbox = { min = { x = 990, y = 1990 }, max = { x = 1010, y = 2010 } } } },
+  [1001] = { [CT.BOUNDING_VOLUME] = { bbox = { min = { x = 1090, y = 1990 }, max = { x = 1110, y = 2010 } } } },
+  [1002] = { [CT.TOWN_BUILDING] = { construction = 1003 } },
+  [1003] = { [CT.BOUNDING_VOLUME] = { bbox = { min = { x = 21040, y = 1995 }, max = { x = 21060, y = 2005 } } } },
 }
 local function mkVeh(id, name, model, bought)
   comps[id] = { [CT.NAME] = { name = name }, [CT.TRANSPORT_VEHICLE] = {
@@ -138,7 +144,8 @@ api = {
         getLineCargoInfo = function() return { frequency = 0.01, totalCapacity = 80 } end,
       },
       stationSystem = { getStation2TownMap = function() return { [600] = 900, [601] = 901 } end },
-      townBuildingSystem = { getTown2personCapacitiesMap = function() return { [900] = { 1000, 100, 20 }, [901] = vec({ 300, 30, 0 }) } end },
+      townBuildingSystem = { getTown2personCapacitiesMap = function() return { [900] = { 1000, 100, 20 }, [901] = vec({ 300, 30, 0 }) } end,
+        getTown2BuildingMap = function() return { [900] = vec({ 1000, 1001 }), [901] = { 1002 } } end },
       simEntityAtVehicleSystem = { getVehicleSimEntitiesCount = function(v) return 12 end },
     },
   },
@@ -214,6 +221,9 @@ checks += [
     ("stop towns (UTF-8)", [x.get("town") for x in lines[100]["stops"]] == ["Springfield", "Zürich"] and lines[100]["towns"] == ["Springfield", "Zürich"]),
     ("town list", m["townCount"] == 2 and {t["name"]: t["population"] for t in snap["towns"]} == {"Springfield": 800, "Zürich": 200}),
     ("town size/reach", [(t["size"], t["reachability"]["commercialPublic"], t["developmentActive"]) for t in snap["towns"] if t["id"] == 900] == [(1120, 5, True)]),
+    ("town positions", {t["id"]: t.get("position") for t in snap["towns"]} == {900: {"x": 1050, "y": 2000}, 901: {"x": 21050, "y": 2000}}),
+    ("route ideas", [(r["distanceKm"], r.get("linkedBy")) for r in srv.tool_route_ideas({"include_linked": True})["pairs"]] == [(20.0, ["Line A"])]
+                    and srv.tool_route_ideas({})["totalMatching"] == 0),
     ("option logEach", sum(1 for x in g.LOG.values() if "answered" in x) >= 2),
     ("no diagnostics", m["diagnostics"] == {} or m["diagnostics"] == []),
 ]

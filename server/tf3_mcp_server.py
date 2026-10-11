@@ -21,7 +21,7 @@ import sys
 import time
 
 SERVER_NAME = "tf3-mcp-bridge"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 APP_ID = "3493540"
 EXCHANGE_DIRS = ("recordings", "keyframes", "mod_presets")
 PREFIX = "mcp_bridge__"
@@ -662,6 +662,7 @@ def tool_list_towns(args):
             "reachability": t.get("reachability"),
             "developmentActive": t.get("developmentActive"),
             "linesServing": len(lines),
+            "position": t.get("position"),
         }
         if args.get("include_lines", bool(query)):
             row["lines"] = [{"id": l.get("id"), "name": l.get("name"), "carriers": l.get("carriers"),
@@ -682,7 +683,60 @@ def tool_list_towns(args):
         "towns": rows[:limit],
         "notes": "population = residential capacity in use; size = residential + commercial + industrial capacity. "
                  "linesServing = your lines with a stop in the town. lineUsage is the game's town line-usage value. "
-                 "reachability: destinations reachable by public transport vs. by car.",
+                 "reachability: destinations reachable by public transport vs. by car. position = estimated town "
+                 "centre in world metres (x, y).",
+    }
+    out.update(freshness(warning, age))
+    return out
+
+
+def tool_route_ideas(args):
+    """Town pairs for new lines: straight-line distance, populations, whether a line already links them."""
+    import math
+    snap, warning, age = load_snapshot()
+    towns = [t for t in snap.get("towns") or [] if t.get("position")]
+    if not towns:
+        raise RuntimeError("No town positions in the data: the mod setting 'Town list' is off, or the mod is outdated.")
+    min_pop = float(args.get("min_population") or 0)
+    max_km = float(args.get("max_distance_km") or 0)
+    min_km = float(args.get("min_distance_km") or 0)
+    town_filter = (args.get("town") or "").lower()
+    linked = {}  # (townA, townB) -> line names with stops in both
+    for l in snap.get("lines", []):
+        ids = sorted({st.get("townId") for st in l.get("stops") or [] if st.get("townId") is not None})
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                linked.setdefault((a, b), []).append(l.get("name"))
+    towns = [t for t in towns if (t.get("population") or 0) >= min_pop]
+    pairs = []
+    for i, a in enumerate(towns):
+        for b in towns[i + 1:]:
+            if town_filter and town_filter not in (a.get("name") or "").lower() \
+                    and town_filter not in (b.get("name") or "").lower():
+                continue
+            km = math.hypot(a["position"]["x"] - b["position"]["x"], a["position"]["y"] - b["position"]["y"]) / 1000
+            if (max_km and km > max_km) or km < min_km:
+                continue
+            lines = linked.get(tuple(sorted((a.get("id"), b.get("id")))), [])
+            pa, pb = a.get("population") or 0, b.get("population") or 0
+            pairs.append(compact({
+                "towns": [a.get("name"), b.get("name")],
+                "populations": [pa, pb],
+                "distanceKm": round(km, 1),
+                "linkedBy": lines or None,
+                # gravity-style demand estimate: bigger and closer towns score higher (relative, not a forecast)
+                "potential": round(math.sqrt(pa * pb) / max(km, 1), 1),
+            }))
+    if not args.get("include_linked"):
+        pairs = [p for p in pairs if "linkedBy" not in p]
+    pairs.sort(key=lambda p: -p["potential"])
+    limit = max(1, min(int(args.get("limit") or 25), 1000))
+    out = {
+        "totalMatching": len(pairs),
+        "pairs": pairs[:limit],
+        "notes": "distanceKm is straight-line between estimated town centres; real routes are longer and depend on "
+                 "terrain. potential = sqrt(popA * popB) / distanceKm, a relative ranking only. linkedBy = your lines "
+                 "with stops in both towns (hidden unless include_linked). Use tf3_list_vehicle_models for vehicles.",
     }
     out.update(freshness(warning, age))
     return out
@@ -777,6 +831,24 @@ TOOLS = [
             },
         },
         "handler": tool_list_towns,
+    },
+    {
+        "name": "tf3_route_ideas",
+        "description": "Transport Fever 3: plan new lines. Town pairs ranked by a simple demand estimate (bigger and "
+                       "closer towns first), with straight-line distance, populations and whether one of your lines "
+                       "already links them. By default only pairs not yet linked.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "town": {"type": "string", "description": "only pairs involving towns whose name contains this"},
+                "min_population": {"type": "number", "description": "ignore smaller towns"},
+                "min_distance_km": {"type": "number"},
+                "max_distance_km": {"type": "number", "description": "e.g. 15 for buses, 150 for regional rail"},
+                "include_linked": {"type": "boolean", "description": "also list pairs your lines already link"},
+                "limit": {"type": "integer", "description": "default 25"},
+            },
+        },
+        "handler": tool_route_ideas,
     },
     {
         "name": "tf3_get_line",

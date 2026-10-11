@@ -29,7 +29,7 @@ check("initialize", r["result"]["serverInfo"]["name"] == "tf3-mcp-bridge")
 rpc(None, "notifications/initialized")
 r = rpc(2, "tools/list")
 names = [t["name"] for t in r["result"]["tools"]]
-check("6 tools", names == ["tf3_status", "tf3_list_lines", "tf3_list_towns", "tf3_get_line", "tf3_list_vehicle_models", "tf3_fleet_issues"])
+check("7 tools", names == ["tf3_status", "tf3_list_lines", "tf3_list_towns", "tf3_route_ideas", "tf3_get_line", "tf3_list_vehicle_models", "tf3_fleet_issues"])
 
 def call(i, name, args=None):
     r = rpc(i, "tools/call", {"name": name, "arguments": args or {}})

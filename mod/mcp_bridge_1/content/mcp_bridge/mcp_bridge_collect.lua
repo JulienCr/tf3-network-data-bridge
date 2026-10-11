@@ -497,6 +497,54 @@ end
 
 local LAND_USES = { "residential", "commercial", "industrial" }
 
+-- town centre (world x/y in metres), estimated from a sample of the town's buildings; cached for the session since
+-- towns barely move, so the building map is only read when a town has no position yet
+local townPos = {}
+local TOWN_SAMPLE = 24
+
+local function bboxCentre(e)
+	local ok, x, y = pcall(function()
+		local bv = api.engine.getComponent(e, api.type.ComponentType.BOUNDING_VOLUME)
+		if bv == nil then return nil end
+		local b = bv.bbox
+		return (b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2
+	end)
+	if ok and type(x) == "number" and type(y) == "number" then return x, y end
+	return nil
+end
+
+local function townPosition(id, ctx)
+	if townPos[id] ~= nil then return townPos[id] or nil end
+	if ctx.town2buildings == nil then
+		ctx.town2buildings = {}
+		eachPair(try("getTown2BuildingMap", function()
+			return api.engine.system.townBuildingSystem.getTown2BuildingMap()
+		end), function(town, list) ctx.town2buildings[town] = list end)
+	end
+	local list = ctx.town2buildings[id]
+	local n = size(list)
+	local sx, sy, count = 0, 0, 0
+	local step = math.max(1, math.floor(n / TOWN_SAMPLE))
+	for i = 1, n, step do
+		local b = at(list, i)
+		local x, y = bboxCentre(b)
+		if x == nil then -- the box may sit on the building's construction
+			local okC, con = pcall(function()
+				return api.engine.getComponent(b, api.type.ComponentType.TOWN_BUILDING).construction
+			end)
+			if okC and con ~= nil then x, y = bboxCentre(con) end
+		end
+		if x ~= nil then sx, sy, count = sx + x, sy + y, count + 1 end
+		if count >= TOWN_SAMPLE then break end
+	end
+	if count == 0 then
+		townPos[id] = false
+		return nil
+	end
+	townPos[id] = { x = math.floor(sx / count + 0.5), y = math.floor(sy / count + 0.5) }
+	return townPos[id]
+end
+
 function M.town(entry, ctx)
 	local id, caps = entry[1], entry[2]
 	local T = { id = id, name = nameOf(id) }
@@ -528,6 +576,7 @@ function M.town(entry, ctx)
 	end
 	local comp = try("TOWN", function() return api.engine.getComponent(id, api.type.ComponentType.TOWN) end)
 	if comp then T.developmentActive = get(comp, "developmentActive") end
+	T.position = townPosition(id, ctx)
 	return T
 end
 

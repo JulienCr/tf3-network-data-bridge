@@ -20,7 +20,7 @@ It has two parts:
 - **Lines:** stops and their towns, vehicles, capacity usage, 12-month profit, profit per vehicle, running costs and
   problems.
 - **Vehicles:** model, age against lifespan, maintenance, current load, running cost, value and profit.
-- **Towns:** population, size per district, public transport reach and the lines serving them.
+- **Towns:** location, population, size per district, public transport reach and the lines serving them.
 - **Vehicle models you can buy this year:** price, capacity, top speed, power and lifespan.
 
 ## Setup
@@ -58,6 +58,7 @@ For a quick check without an AI app, run
 | --- | --- |
 | `tf3_status` | Game date, money, counts of lines, vehicles and towns, and the bridge's health |
 | `tf3_list_lines` | All lines with usage, profit and vehicle count. You can sort and filter by carrier, name or town |
+| `tf3_route_ideas` | Town pairs for new lines, ranked by a simple demand estimate, with distance and whether a line already links them |
 | `tf3_get_line` | One line in full, by id or name: its stops, every vehicle and the money figures |
 | `tf3_list_towns` | Towns with population, size, reach and the lines serving them |
 | `tf3_list_vehicle_models` | Vehicles available to buy now, with price, capacity, speed, power and lifespan |
@@ -68,6 +69,7 @@ Some prompts to try:
 - "Find my five least profitable lines and tell me why they underperform."
 - "Which of my vehicles are past their lifespan? Suggest replacements I can buy today and estimate the payback."
 - "Which towns over 1,000 people have no line serving them?"
+- "Plan a regional rail network for my biggest unconnected towns, starting with the busiest links, and suggest trains I can buy for each."
 
 ## Mod settings
 
