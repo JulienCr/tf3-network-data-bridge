@@ -577,6 +577,29 @@ function M.town(entry, ctx)
 	local comp = try("TOWN", function() return api.engine.getComponent(id, api.type.ComponentType.TOWN) end)
 	if comp then T.developmentActive = get(comp, "developmentActive") end
 	T.position = townPosition(id, ctx)
+	-- goods each district wants, and the town's current supply and limit per cargo
+	if comp then
+		local needs, any = {}, false
+		for i, key in ipairs(LAND_USES) do
+			local list = get(comp, "cargoNeeds", i)
+			local names = {}
+			for k = 1, size(list) do
+				local pair = at(list, k)
+				local c = pair and at(pair, 1)
+				if c ~= nil then names[#names + 1] = cargoName(c) end
+			end
+			if #names > 0 then needs[key], any = names, true end
+		end
+		if any then T.cargoNeeds = needs end
+	end
+	local supply, anySupply = {}, false
+	eachPair(try("getCargoSupplyAndLimit", function()
+		return api.engine.system.townBuildingSystem.getCargoSupplyAndLimit(id)
+	end), function(c, v)
+		local s, l = num(at(v, 1)), num(at(v, 2))
+		if (s or 0) > 0 or (l or 0) > 0 then supply[cargoName(c)], anySupply = { supply = s, limit = l }, true end
+	end)
+	if anySupply then T.cargoSupply = supply end
 	return T
 end
 
@@ -603,5 +626,7 @@ function M.lineProblems(player)
 end
 
 M.size, M.at, M.toArray, M.try = size, at, toArray, try
+M.get, M.eachPair, M.num, M.note, M.enumName = get, eachPair, num, note, enumName
+M.cargoName, M.nameOf, M.bboxCentre, M.stateName = cargoName, nameOf, bboxCentre, stateName
 
 return M

@@ -21,13 +21,15 @@ import sys
 import time
 
 SERVER_NAME = "tf3-mcp-bridge"
-SERVER_VERSION = "1.1.1"
+SERVER_VERSION = "1.2.0"
 APP_ID = "3493540"
 EXCHANGE_DIRS = ("recordings", "keyframes", "mod_presets")
 PREFIX = "mcp_bridge__"
 REQUEST_TIMEOUT_SEC = float(os.environ.get("TF3_MCP_TIMEOUT", "20"))
 SNAPSHOT_REUSE_SEC = 3  # several tool calls in one answer share one snapshot
 MODELS_REUSE_SEC = 600
+# newer request kinds: (seconds an answer is reused, first mod bridgeVersion that answers it)
+KINDS = {"industries": (60, 5), "stations": (10, 5), "finances": (10, 5), "vehicles": (2, 5)}
 
 # ----------------------------------------------------------------------------------------------------------------
 # locating the exchange folder
@@ -427,6 +429,25 @@ def load_snapshot():
     return snap, warning, age
 
 
+def mod_version():
+    """bridgeVersion from the newest hello file (written by the mod when a save loads)."""
+    try:
+        hellos = hello_files(bridge_dir())
+        return int(read_lua_data(hellos[0]).get("bridgeVersion") or 0) if hellos else 0
+    except Exception:
+        return 0
+
+
+def load_kind(what):
+    reuse, needs = KINDS[what]
+    have = mod_version()
+    if have and have < needs:
+        raise RuntimeError(f"This needs a newer game mod (bridge version {needs}, the game has {have}). Update "
+                           "'Network Data Bridge (MCP)' from the Mod Hub, then restart the game and load the save.")
+    data, age, warning = fetch(what, reuse)
+    return data, warning, age
+
+
 def load_models():
     models, age, warning = fetch("models", MODELS_REUSE_SEC)
     return models, warning
@@ -664,6 +685,9 @@ def tool_list_towns(args):
             "linesServing": len(lines),
             "position": t.get("position"),
         }
+        if args.get("include_cargo", bool(query)):
+            row["cargoNeeds"] = t.get("cargoNeeds")
+            row["cargoSupply"] = t.get("cargoSupply")
         if args.get("include_lines", bool(query)):
             row["lines"] = [{"id": l.get("id"), "name": l.get("name"), "carriers": l.get("carriers"),
                              "vehicles": l.get("vehicleCount"), "usagePct": l.get("usagePct"),
@@ -737,6 +761,262 @@ def tool_route_ideas(args):
         "notes": "distanceKm is straight-line between estimated town centres; real routes are longer and depend on "
                  "terrain. potential = sqrt(popA * popB) / distanceKm, a relative ranking only. linkedBy = your lines "
                  "with stops in both towns (hidden unless include_linked). Use tf3_list_vehicle_models for vehicles.",
+    }
+    out.update(freshness(warning, age))
+    return out
+
+
+
+def town_positions():
+    """Town names and positions from the snapshot (for nearest-town lookups), or {} when unavailable."""
+    try:
+        snap, _, _ = load_snapshot()
+    except Exception:
+        return []
+    return [(t.get("name"), t["position"]) for t in snap.get("towns") or [] if t.get("position")]
+
+
+def nearest_town(pos, towns):
+    import math
+    if not pos or not towns:
+        return None
+    name, best = None, None
+    for n, tp in towns:
+        d = math.hypot(pos["x"] - tp["x"], pos["y"] - tp["y"])
+        if best is None or d < best:
+            name, best = n, d
+    return {"name": name, "distanceKm": round(best / 1000, 1)}
+
+
+INDUSTRY_STATUS = ("missing_inputs", "not_producing", "closing", "unshipped", "all")
+
+
+def industry_flags(i):
+    flags = []
+    ins = i.get("inputs") or []
+    if ins and all((x.get("deliveredPerYear") or 0) == 0 for x in ins):
+        flags.append("missing_inputs")
+    elif any((x.get("deliveredPerYear") or 0) == 0 for x in ins):
+        flags.append("some_inputs_missing")
+    if i.get("producing") is False:
+        flags.append("not_producing")
+    if i.get("closing"):
+        flags.append("closing")
+    outs = i.get("outputs") or []
+    if any((o.get("producedPerYear") or 0) > 0 and (o.get("shippedPerYear") or 0) == 0 for o in outs):
+        flags.append("unshipped")
+    return flags
+
+
+def tool_list_industries(args):
+    data, warning, age = load_kind("industries")
+    items = data.get("industries") or []
+    cargo = (args.get("cargo") or "").upper()
+    town = (args.get("town") or "").lower()
+    status = args.get("status") or "all"
+    if status not in INDUSTRY_STATUS:
+        raise ValueError(f"status must be one of {list(INDUSTRY_STATUS)}")
+    by_cargo = {}
+    rows = []
+    for i in items:
+        for o in i.get("outputs") or []:
+            c = by_cargo.setdefault(o["cargo"], {"producedPerYear": 0, "shippedPerYear": 0, "producers": 0,
+                                                 "industryDemandPerYear": 0, "deliveredToIndustriesPerYear": 0,
+                                                 "consumers": 0})
+            c["producedPerYear"] += o.get("producedPerYear") or 0
+            c["shippedPerYear"] += o.get("shippedPerYear") or 0
+            c["producers"] += 1
+        for x in i.get("inputs") or []:
+            c = by_cargo.setdefault(x["cargo"], {"producedPerYear": 0, "shippedPerYear": 0, "producers": 0,
+                                                 "industryDemandPerYear": 0, "deliveredToIndustriesPerYear": 0,
+                                                 "consumers": 0})
+            c["industryDemandPerYear"] += x.get("maxConsumptionPerYear") or 0
+            c["deliveredToIndustriesPerYear"] += x.get("deliveredPerYear") or 0
+            c["consumers"] += 1
+        flags = industry_flags(i)
+        if status != "all" and status not in flags:
+            continue
+        if town and town not in (i.get("town") or "").lower():
+            continue
+        if cargo and not any(cargo in (x.get("cargo") or "") for x in (i.get("inputs") or []) + (i.get("outputs") or [])):
+            continue
+        row = dict(i)
+        row["flags"] = flags
+        row["producedPerYear"] = sum(o.get("producedPerYear") or 0 for o in i.get("outputs") or [])
+        row["shippedPerYear"] = sum(o.get("shippedPerYear") or 0 for o in i.get("outputs") or [])
+        rows.append(compact(row))
+    key = args.get("sort_by") or "producedPerYear"
+    if key not in ("producedPerYear", "shippedPerYear", "level", "name"):
+        raise ValueError("sort_by must be producedPerYear, shippedPerYear, level or name")
+    if key == "name":
+        rows.sort(key=lambda r: (r.get("name") or "").lower())
+    else:
+        rows.sort(key=lambda r: -(r.get(key) or 0))
+    limit = max(1, min(int(args.get("limit") or 50), 1000))
+    out = {
+        "totalMatching": len(rows),
+        "industries": rows[:limit],
+        "notes": "Per year figures are the game's own (last 12 months). flags: missing_inputs = no input delivered, "
+                 "unshipped = produces but nothing is transported, closing = the game will close it. town = closest "
+                 "town. position = world metres (x, y).",
+    }
+    if args.get("include_cargo_summary", True):
+        out["byCargo"] = by_cargo
+    out.update(freshness(warning, age))
+    return out
+
+
+def tool_list_stations(args):
+    data, warning, age = load_kind("stations")
+    rows = []
+    kind = (args.get("kind") or "").lower()
+    town = (args.get("town") or "").lower()
+    query = (args.get("name_contains") or "").lower()
+    for st in data.get("stations") or []:
+        if kind and st.get("kind") != kind:
+            continue
+        if town and town not in (st.get("town") or "").lower():
+            continue
+        if query and query not in (st.get("name") or "").lower():
+            continue
+        row = dict(st)
+        row["waitingTotal"] = sum((st.get("waiting") or {}).values())
+        u = st.get("usage") or {}
+        cap = (u.get("poolCapacity") or 0) + (u.get("terminalCapacity") or 0)
+        row["usagePct"] = pct(u.get("used") or 0, cap)
+        row["lines"] = [l.get("name") for l in st.get("lines") or []]
+        rows.append(compact(row))
+    key = args.get("sort_by") or "waitingTotal"
+    if key not in ("waitingTotal", "usagePct", "terminals", "name"):
+        raise ValueError("sort_by must be waitingTotal, usagePct, terminals or name")
+    if key == "name":
+        rows.sort(key=lambda r: (r.get("name") or "").lower())
+    else:
+        rows.sort(key=lambda r: -(r.get(key) or 0))
+    limit = max(1, min(int(args.get("limit") or 50), 1000))
+    out = {
+        "totalMatching": len(rows),
+        "stations": rows[:limit],
+        "notes": "One row per station group (stations that share a name). waiting = passengers or cargo waiting now, "
+                 "per cargo; longWaits = cargo the game marks as waiting very long. usage = people in the station vs "
+                 "its waiting capacity (overflow = over capacity).",
+    }
+    out.update(freshness(warning, age))
+    return out
+
+
+def tool_list_depots(args):
+    data, warning, age = load_kind("stations")
+    towns = town_positions()
+    carrier = (args.get("carrier") or "").upper()
+    rows = []
+    for d in data.get("depots") or []:
+        if carrier and d.get("carrier") != carrier:
+            continue
+        row = dict(d)
+        row["nearestTown"] = nearest_town(d.get("position"), towns)
+        rows.append(compact(row))
+    rows.sort(key=lambda r: ((r.get("carrier") or ""), (r.get("name") or "").lower()))
+    out = {"totalMatching": len(rows), "depots": rows,
+           "notes": "Your depots with carrier, position (world metres), vehicles parked inside and the nearest town."}
+    out.update(freshness(warning, age))
+    return out
+
+
+def tool_finances(args):
+    data, warning, age = load_kind("finances")
+    fin = (data.get("finances") or [{}])[0]
+    out = dict(fin)
+    try:
+        snap, _, _ = load_snapshot()
+        per = {}
+        for l in snap.get("lines", []):
+            for c in l.get("carriers") or ["OTHER"]:
+                r = per.setdefault(c, {"lines": 0, "vehicles": 0, "profit12m": 0, "runningCostsPerYear": 0})
+                r["lines"] += 1
+                r["vehicles"] += l.get("vehicleCount") or 0
+                r["profit12m"] += l.get("profit12m") or 0
+                r["runningCostsPerYear"] += l.get("runningCostsPerYear") or 0
+        out["linesByCarrier"] = {k: {kk: round(vv) for kk, vv in v.items()} for k, v in per.items()}
+    except Exception as e:
+        out["linesByCarrier"] = f"unavailable: {e}"
+    out["notes"] = ("balance and loan are now; earningsThisYear is since 1 January. linesByCarrier sums your lines' "
+                    "12-month profit (income minus running costs) per carrier. financeTable mirrors the game's "
+                    "finance window (one column per period; layout as the game reports it).")
+    out.update(freshness(warning, age))
+    return out
+
+
+def headway_check(vehicles, day_ticks):
+    """Spacing of a line's vehicles from their latest departures at the busiest stop: gaps in game days."""
+    best = []
+    n_stops = max((len(v.get("stopDepartures") or []) for v in vehicles), default=0)
+    for k in range(n_stops):
+        times = sorted(v["stopDepartures"][k] for v in vehicles
+                       if len(v.get("stopDepartures") or []) > k and v["stopDepartures"][k] > 0)
+        if len(times) > len(best):
+            best = times
+    if len(best) < 3:
+        return None
+    gaps = [b - a for a, b in zip(best, best[1:])]
+    mean = sum(gaps) / len(gaps)
+    if mean <= 0:
+        return None
+    ratio = min(gaps) / mean
+    out = {"vehiclesCompared": len(best), "evenness": round(ratio, 2), "bunched": ratio < 0.25}
+    if day_ticks:
+        out["gapsDays"] = [round(g / day_ticks, 1) for g in gaps]
+    return out
+
+
+def tool_live_vehicles(args):
+    data, warning, age = load_kind("vehicles")
+    meta = data.get("meta") or {}
+    day = (meta.get("yearTicks") or 0) / 365 or None
+    by_line = {}
+    for v in data.get("vehicles") or []:
+        by_line.setdefault(v.get("line"), []).append(v)
+    ref = str(args.get("line") or "").strip().lower()
+    if ref:
+        match = [vs for lid, vs in by_line.items()
+                 if str(lid) == ref or (vs[0].get("lineName") or "").lower() == ref]
+        if not match:
+            match = [vs for vs in by_line.values() if ref in (vs[0].get("lineName") or "").lower()]
+        if not match:
+            raise LookupError(f"No line matches {args.get('line')!r}")
+        vs = match[0]
+        out = {"line": vs[0].get("lineName"), "lineId": vs[0].get("line"), "spacing": headway_check(vs, day),
+               "vehicles": [compact({k: v.get(k) for k in ("id", "name", "position", "speed", "state", "stopIndex",
+                                                            "doorsOpen", "load", "noPath", "userStopped",
+                                                            "timeUntilDeparture", "daysAtTerminal")}) for v in vs]}
+        out.update(freshness(warning, age))
+        return out
+    lines, stuck = [], []
+    for lid, vs in by_line.items():
+        h = headway_check(vs, day)
+        if h:
+            lines.append(dict(h, line=vs[0].get("lineName"), lineId=lid, vehicles=len(vs)))
+        for v in vs:
+            why = []
+            if v.get("noPath"):
+                why.append("no path")
+            if v.get("userStopped"):
+                why.append("stopped by player")
+            if (v.get("daysAtTerminal") or 0) >= 5:
+                why.append(f"{v['daysAtTerminal']} days at a terminal")
+            if why:
+                stuck.append({"vehicle": v.get("name"), "id": v.get("id"), "line": v.get("lineName"),
+                              "position": v.get("position"), "reasons": why})
+    lines.sort(key=lambda r: r["evenness"])
+    limit = max(1, min(int(args.get("limit") or 25), 1000))
+    out = {
+        "linesChecked": len(lines),
+        "bunchedLines": sum(1 for r in lines if r["bunched"]),
+        "lines": lines[:limit],
+        "stuckVehicles": stuck[:limit],
+        "notes": "evenness = smallest gap / average gap between the vehicles' latest departures at the busiest stop "
+                 "(1 = perfectly even, below 0.25 = bunched). Needs 3+ vehicles. Pass line for one line's vehicles "
+                 "with positions (world metres), speed, state and load.",
     }
     out.update(freshness(warning, age))
     return out
@@ -827,6 +1107,7 @@ TOOLS = [
                 "sort_by": {"type": "string", "enum": sorted(TOWN_SORT_KEYS), "description": "default population"},
                 "ascending": {"type": "boolean", "description": "default false (largest first)"},
                 "include_lines": {"type": "boolean", "description": "list serving lines (default: only when filtering by name)"},
+                "include_cargo": {"type": "boolean", "description": "goods each district needs and the supply vs limit (default: only when filtering by name)"},
                 "limit": {"type": "integer", "description": "default 100"},
             },
         },
@@ -879,6 +1160,66 @@ TOOLS = [
             },
         },
         "handler": tool_list_vehicle_models,
+    },
+    {
+        "name": "tf3_list_industries",
+        "description": "Transport Fever 3: industries with location, closest town, level, inputs (delivered, "
+                       "consumed, maximum per year) and outputs (produced, maximum, shipped per year), flags for "
+                       "missing inputs, unshipped output and closing, plus a per-cargo supply and demand summary. "
+                       "Use it to plan cargo chains.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cargo": {"type": "string", "description": "only industries using or making this cargo, e.g. COAL"},
+                "town": {"type": "string", "description": "closest town name contains"},
+                "status": {"type": "string", "enum": list(INDUSTRY_STATUS), "description": "default all"},
+                "sort_by": {"type": "string", "enum": ["producedPerYear", "shippedPerYear", "level", "name"]},
+                "include_cargo_summary": {"type": "boolean", "description": "default true"},
+                "limit": {"type": "integer", "description": "default 50"},
+            },
+        },
+        "handler": tool_list_industries,
+    },
+    {
+        "name": "tf3_list_stations",
+        "description": "Transport Fever 3: your stations with passengers and cargo waiting now, cargo waiting very "
+                       "long, terminals, how full they are, their town and the lines stopping there.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["passenger", "cargo"]},
+                "town": {"type": "string"},
+                "name_contains": {"type": "string"},
+                "sort_by": {"type": "string", "enum": ["waitingTotal", "usagePct", "terminals", "name"]},
+                "limit": {"type": "integer", "description": "default 50"},
+            },
+        },
+        "handler": tool_list_stations,
+    },
+    {
+        "name": "tf3_list_depots",
+        "description": "Transport Fever 3: your depots with carrier, location, vehicles inside and nearest town.",
+        "inputSchema": {"type": "object", "properties": {
+            "carrier": {"type": "string", "enum": ["ROAD", "RAIL", "TRAM", "AIR", "WATER"]}}},
+        "handler": tool_list_depots,
+    },
+    {
+        "name": "tf3_finances",
+        "description": "Transport Fever 3: company finances: balance, loan, earnings this year, company value and "
+                       "statistics, passengers and cargo transported, the finance table per period and carrier, and "
+                       "12-month line profit summed per carrier.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": tool_finances,
+    },
+    {
+        "name": "tf3_live_vehicles",
+        "description": "Transport Fever 3: live vehicle check. Without a line: which lines have bunched vehicles "
+                       "(uneven spacing) and which vehicles are stuck (no path, stopped, waiting long). With a line: "
+                       "every vehicle's position, speed, state, next stop and load.",
+        "inputSchema": {"type": "object", "properties": {
+            "line": {"type": "string", "description": "line id or name"},
+            "limit": {"type": "integer", "description": "default 25"}}},
+        "handler": tool_live_vehicles,
     },
     {
         "name": "tf3_fleet_issues",

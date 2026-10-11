@@ -19,8 +19,15 @@ It has two parts:
 
 - **Lines:** stops and their towns, vehicles, capacity usage, 12-month profit, profit per vehicle, running costs and
   problems.
-- **Vehicles:** model, age against lifespan, maintenance, current load, running cost, value and profit.
-- **Towns:** location, population, size per district, public transport reach and the lines serving them.
+- **Vehicles:** model, age against lifespan, maintenance, load, running cost, value and profit. Also each vehicle's live
+  position, speed and state, with checks for bunched lines and stuck vehicles.
+- **Industries:** location, level, inputs delivered and outputs produced and shipped per year, missing inputs and
+  closures, plus supply and demand per cargo.
+- **Stations:** passengers and cargo waiting now, long waits, how full each station is, the lines stopping there, and
+  your depots.
+- **Towns:** location, population, size per district, the goods each district needs, public transport reach and the
+  lines serving them.
+- **Finances:** balance, loan, earnings, company value and the finance table per carrier.
 - **Vehicle models you can buy this year:** price, capacity, top speed, power and lifespan.
 
 ## Setup
@@ -58,17 +65,24 @@ For a quick check without an AI app, run
 | --- | --- |
 | `tf3_status` | Game date, money, counts of lines, vehicles and towns, and the bridge's health |
 | `tf3_list_lines` | All lines with usage, profit and vehicle count. You can sort and filter by carrier, name or town |
-| `tf3_route_ideas` | Town pairs for new lines, ranked by a simple demand estimate, with distance and whether a line already links them |
 | `tf3_get_line` | One line in full, by id or name: its stops, every vehicle and the money figures |
-| `tf3_list_towns` | Towns with population, size, reach and the lines serving them |
-| `tf3_list_vehicle_models` | Vehicles available to buy now, with price, capacity, speed, power and lifespan |
+| `tf3_live_vehicles` | Bunched lines and stuck vehicles, or one line's vehicles with live position, speed, state and load |
 | `tf3_fleet_issues` | Lines that lose money, are nearly empty or full, have problems or no vehicles; vehicles past their lifespan, worn, stuck or stopped |
+| `tf3_list_vehicle_models` | Vehicles available to buy now, with price, capacity, speed, power and lifespan |
+| `tf3_list_towns` | Towns with location, population, size, reach, the goods they need and the lines serving them |
+| `tf3_route_ideas` | Town pairs for new lines, ranked by a simple demand estimate, with distance and whether a line already links them |
+| `tf3_list_industries` | Industries with production, inputs, shipping and problems, plus supply and demand per cargo |
+| `tf3_list_stations` | Your stations with waiting passengers and cargo, long waits, how full they are and their lines |
+| `tf3_list_depots` | Your depots with carrier, location, vehicles inside and nearest town |
+| `tf3_finances` | Balance, loan, earnings, company value, the finance table and line profit per carrier |
 
 Some prompts to try:
 
 - "Find my five least profitable lines and tell me why they underperform."
 - "Which of my vehicles are past their lifespan? Suggest replacements I can buy today and estimate the payback."
 - "Which towns over 1,000 people have no line serving them?"
+- "Which industries are missing inputs, and which of my stations could supply them?"
+- "Are any of my lines bunched? Which ones, and what would you change?"
 - "Plan a regional rail network for my biggest unconnected towns, starting with the busiest links, and suggest trains I can buy for each."
 
 ## Mod settings

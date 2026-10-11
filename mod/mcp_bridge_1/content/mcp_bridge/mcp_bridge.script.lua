@@ -9,7 +9,7 @@
 --   mcp_bridge__hello_<stamp>          written at load: bridge version; the server finds the folder by it
 --   mcp_bridge__request_<stamp>        created here once per load (a new name: the game refuses names it has seen),
 --                                       then rewritten by the server: { id = <number>, what = ... }; read twice a
---                                       second, a new id is a new request ("snapshot" or "models")
+--                                       second, a new id is a new request (what: one of KINDS)
 --   mcp_bridge__<what>_<id>_p1 .. _pN   the answer as JSON split in parts: { seq = id, part = i, data = "<json>" }
 --   mcp_bridge__<what>_<id>             written last: { seq = id, what = what, parts = N, bytes = <length> }
 -- Collecting and writing are sliced: each frame spends at most the "budget" setting in CPU time.
@@ -17,12 +17,17 @@
 local MOD = (getOwningModId and getOwningModId()) or "mcp_bridge_1"
 local json = ug_require(MOD .. "::/mcp_bridge/mcp_bridge_json.lua")
 local collect = ug_require(MOD .. "::/mcp_bridge/mcp_bridge_collect.lua")
+local extra = ug_require(MOD .. "::/mcp_bridge/mcp_bridge_extra.lua")
 
-local VERSION = 4
+local VERSION = 5
 local USERDATA_DIRS = { "mod_presets", "recordings", "keyframes" }
 local PREFIX = "mcp_bridge__"
 local PART_CHARS = 200000
 local POLL_SEC = 0.5
+-- request kinds, in the order queued requests are served
+local KINDS = { "snapshot", "models", "industries", "stations", "finances", "vehicles" }
+local KNOWN = {}
+for _, k in ipairs(KINDS) do KNOWN[k] = true end
 
 -- mod settings (mod.json params): each arrives as a 1-based index into these lists
 local OPTION_VALUES = {
@@ -56,7 +61,7 @@ local function say(msg)
 end
 
 local G = {
-	phase = "init", -- init, idle, lines, towns, encode, models, flush, off
+	phase = "init", -- init, idle, lines, towns, encode, models, job, flush, off
 	nextPoll = 0,
 	failures = 0,
 	queue = {}, -- pending requests: what -> id
@@ -157,7 +162,7 @@ local function poll()
 	local id, what = tonumber(field(req, "id")), field(req, "what")
 	if id == nil or id == 0 or id == G.lastId then return end
 	G.lastId = id
-	if what ~= "models" then what = "snapshot" end
+	if not KNOWN[what] then what = "snapshot" end
 	if not G.sawRequest then
 		say("first request received: " .. what .. " " .. tostring(id))
 		G.sawRequest = true
@@ -302,22 +307,70 @@ local function stepModels(deadline)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
+-- the other kinds (mcp_bridge_extra.lua): lists of items collected one by one, then encoded together
+
+local function startJob(what, id)
+	local t = collect.timeInfo()
+	local ctx = { id = id, player = api.engine.util.getPlayer(), gameTime = t.gameTime, yearTicks = t.yearTicks,
+		date = t.date, cpu = 0, frames = 0 }
+	G.job = { what = what, id = id, ctx = ctx, lists = extra.jobs[what].start(ctx), li = 1, index = 1, out = {} }
+	G.phase = "job"
+end
+
+local function stepJob(deadline)
+	local j = G.job
+	while j.li <= #j.lists do
+		local L = j.lists[j.li]
+		local out = j.out[j.li] or {}
+		j.out[j.li] = out
+		while j.index <= #L.items do
+			local ok, v = pcall(L.fn, L.items[j.index], j.ctx)
+			if ok and v ~= nil then
+				out[#out + 1] = json.encode(v)
+			elseif not ok then
+				collect.note(L.key, v)
+			end
+			j.index = j.index + 1
+			if os.clock() >= deadline then return end
+		end
+		j.li, j.index = j.li + 1, 1
+	end
+	local ctx = j.ctx
+	local meta = { bridgeVersion = VERSION, requestId = j.id, date = ctx.date, gameTime = ctx.gameTime, yearTicks = ctx.yearTicks,
+		collectFrames = ctx.frames + 1, collectCpuMs = math.floor(ctx.cpu * 1000 + 0.5), diagnostics = collect.diag }
+	local parts = { '{"meta":' .. json.encode(meta) }
+	for i, L in ipairs(j.lists) do parts[#parts + 1] = ',"' .. L.key .. '":' .. json.array(j.out[i]) end
+	parts[#parts + 1] = "}"
+	G.job = nil
+	startFlush(j.what, j.id, table.concat(parts))
+end
+
+---------------------------------------------------------------------------------------------------------------------
+
+local function nextRequest()
+	for _, k in ipairs(KINDS) do
+		local id = G.queue[k]
+		if id then
+			G.queue[k] = nil
+			return k, id
+		end
+	end
+	return nil
+end
 
 local function step()
 	if G.phase == "init" then init(); return end
 	local t0 = os.clock()
 	if G.phase == "idle" then
 		poll()
-		if G.queue.snapshot then
-			local id = G.queue.snapshot
-			G.queue.snapshot = nil
+		local what, id = nextRequest()
+		if what == nil then return end
+		if what == "snapshot" then
 			startSnapshot(id)
-		elseif G.queue.models then
-			local id = G.queue.models
-			G.queue.models = nil
+		elseif what == "models" then
 			startModels(id)
 		else
-			return
+			startJob(what, id)
 		end
 	end
 	local deadline = os.clock() + opt("budget")
@@ -325,12 +378,14 @@ local function step()
 	if G.phase == "towns" and os.clock() < deadline then stepTowns(deadline) end
 	if G.phase == "encode" and os.clock() < deadline then encodeSnapshot() end
 	if G.phase == "models" and os.clock() < deadline then stepModels(deadline) end
+	if G.phase == "job" and os.clock() < deadline then stepJob(deadline) end
 	if G.phase == "flush" and os.clock() < deadline then stepFlush(deadline) end
 	local ms = (os.clock() - t0) * 1000
 	G.jobMaxMs = math.max(G.jobMaxMs, ms)
-	if G.ctx then -- still collecting
-		G.ctx.cpu = G.ctx.cpu + ms / 1000
-		G.ctx.frames = G.ctx.frames + 1
+	local busy = G.ctx or (G.job and G.job.ctx) -- still collecting
+	if busy then
+		busy.cpu = busy.cpu + ms / 1000
+		busy.frames = busy.frames + 1
 	end
 end
 
@@ -342,7 +397,7 @@ function script.guiUpdate()
 	if not ok then
 		G.failures = G.failures + 1
 		say("error (" .. G.failures .. "): " .. tostring(err))
-		G.ctx, G.models, G.flush = nil, nil, nil
+		G.ctx, G.models, G.flush, G.job = nil, nil, nil, nil
 		G.phase = G.failures >= 5 and "off" or "idle"
 		if G.phase == "off" then say("too many errors; the bridge is off until the game is reloaded") end
 	end
