@@ -7,7 +7,7 @@ their lifespan, and what should replace them?"*, *"Which big towns have no rail 
 
 It has two parts:
 
-- **The game mod** "AI Assistant Bridge (MCP)", on mod.io. It answers requests with live data from your game and
+- **The game mod** "AI Assistant Bridge (MCP)", [on mod.io](https://mod.io/g/transportfever3/m/ai-assistant-bridge-mcp). It answers requests with live data from your game and
   does nothing between requests. It is **read-only**: it never changes your game and makes no network connections.
 - **A small MCP server**, `server/tf3_mcp_server.py`. It's one Python file that uses only the standard library,
   downloaded from this repository's releases. (mod.io doesn't allow `.py` files in mods.) Your AI app runs it and it
@@ -26,7 +26,7 @@ It has two parts:
 You need Transport Fever 3 on Windows, [Python 3.8 or newer](https://www.python.org/downloads/) and an MCP app such
 as the [Claude desktop app](https://claude.ai/download) or Claude Code.
 
-1. **Subscribe** to the mod on mod.io. Then in the game, enable **AI Assistant Bridge (MCP)** for your save. You can
+1. **Subscribe** to [the mod on mod.io](https://mod.io/g/transportfever3/m/ai-assistant-bridge-mcp) (or find "AI Assistant Bridge (MCP)" in the in-game Mod Hub). Then in the game, enable **AI Assistant Bridge (MCP)** for your save. You can
    add it to an existing save and remove it again later.
 2. **Download the server and register it with your AI app.** Paste this into PowerShell:
 
