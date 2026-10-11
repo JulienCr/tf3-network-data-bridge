@@ -20,7 +20,7 @@ foreach ($local in $locals) {
     New-Item -ItemType Directory -Force $dst, (Join-Path $dst 'server') | Out-Null
     Copy-Item -Recurse -Force (Join-Path $src '*') $dst
     Copy-Item -Force (Join-Path $PSScriptRoot 'server\tf3_mcp_server.py') (Join-Path $dst 'server')
-    Copy-Item -Force (Join-Path $PSScriptRoot 'LICENSE') $dst
+    Copy-Item -Force (Join-Path $PSScriptRoot 'LICENSE') (Join-Path $dst 'LICENSE.txt')
     [IO.File]::WriteAllText((Join-Path $dst '_content.json'), $contentJson, (New-Object Text.UTF8Encoding $false))
     Write-Host "Deployed to $dst"
 }
