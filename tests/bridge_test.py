@@ -1,0 +1,235 @@
+"""End-to-end test of the MCP Bridge: the real mod Lua runs with a fake `api` and a fake userdata store (game-like
+serializer, no overwrite, a refused folder) on a background "game loop" thread, while the real server code sends
+requests and reads the answers."""
+import importlib.util, json, os, sys, tempfile, threading, time
+from lupa import LuaRuntime
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repository root
+MOD = os.path.join(ROOT, "mod", "mcp_bridge_1", "content")
+out = tempfile.mkdtemp(prefix="bridge_")
+
+lua = LuaRuntime(unpack_returned_tuples=True)
+g = lua.globals()
+g.MOD_ROOT = MOD.replace("\\", "/")
+g.OUT_DIR = out.replace("\\", "/")
+
+lua.execute(r'''
+local files = {}
+function ug_require(name)
+  local path = name:gsub("^[^:]+::/", MOD_ROOT .. "/")
+  if not files[path] then files[path] = dofile(path) end
+  return files[path]
+end
+function getOwningModId() return "mcp_bridge_1" end
+LOG = {}
+function debugPrint(s) LOG[#LOG+1] = s; print(s) end
+-- userdata store like the game's: <OUT_DIR>/<dir>/<name>.lua, "function data() return {...} end", %q strings,
+-- saveUserdata never overwrites; the folder "recordings" silently refuses saves (as TF3 does for some folders)
+local function ser(v, ind)
+  local t = type(v)
+  if t == "string" then return string.format("%q", v) end
+  if t == "number" or t == "boolean" then return tostring(v) end
+  if t == "table" then
+    local out = { "{ \n" }
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    for _, k in ipairs(keys) do
+      local key = type(k) == "string" and k:match("^[%a_][%w_]*$") and k or ("[" .. ser(k) .. "]")
+      out[#out + 1] = ind .. "\t" .. key .. " = " .. ser(v[k], ind .. "\t") .. ",\n"
+    end
+    out[#out + 1] = ind .. "}"
+    return table.concat(out)
+  end
+  return "nil"
+end
+local function upath(dir, name) return OUT_DIR .. "/" .. dir .. "/" .. name .. ".lua" end
+local function exists(path) local f = io.open(path, "rb"); if f then f:close(); return true end; return false end
+app = {
+  getAllUserdata = function(dir) return {} end,
+  saveUserdata = function(dir, name, tbl)
+    if dir == "recordings" then return end
+    local path = upath(dir, name)
+    if exists(path) then return end
+    local f = assert(io.open(path, "wb"))
+    f:write("function data()\nreturn " .. ser(tbl, "\t") .. "\nend\n")
+    f:close()
+  end,
+  loadUserdata = function(dir, name) local env = {}; assert(loadfile(upath(dir, name), "t", env))(); return env.data() end,
+  removeUserdata = function(dir, name) os.remove(upath(dir, name)) end,
+}
+
+-- native-vector imitation (1-based :size()/:at())
+local function vec(t) return setmetatable({}, { __index = { size = function() return #t end, at = function(_, i) return t[i] end } }) end
+
+local CT = { NAME=1, LINE=2, TRANSPORT_VEHICLE=3, GAME_TIME=4, GAME_SPEED=5, LOG_BOOK=6, STATION_GROUP=7, TOWN=8 }
+local comps = {
+  [1] = { [CT.GAME_TIME] = { gameTime = 5000000 }, [CT.GAME_SPEED] = { speedup = 1, millisPerDay = 2000 } },
+  [100] = { [CT.NAME] = { name = "Line A" }, [CT.LINE] = { stops = vec({ { stationGroup = 500 }, { stationGroup = 501 } }),
+            vehicleInfo = { transportModes = { [3] = true } } },
+            [CT.LOG_BOOK] = { name2log = { passengers = {}, income = {} } } },
+  [101] = { [CT.NAME] = { name = "Line B" }, [CT.LINE] = { stops = { { stationGroup = 500 } }, vehicleInfo = { transportModes = {} } } },
+  [500] = { [CT.NAME] = { name = "Central" }, [CT.STATION_GROUP] = { stations = vec({ 600 }) } },
+  [501] = { [CT.NAME] = { name = 'Harbour "Pier" \\ 1\nb' }, [CT.STATION_GROUP] = { stations = { 601 } } },
+  [900] = { [CT.NAME] = { name = "Springfield" }, [CT.TOWN] = { developmentActive = true } },
+  [901] = { [CT.NAME] = { name = "Zürich" }, [CT.TOWN] = { developmentActive = false } },
+}
+local function mkVeh(id, name, model, bought)
+  comps[id] = { [CT.NAME] = { name = name }, [CT.TRANSPORT_VEHICLE] = {
+    carrier = 0, state = 1, userStopped = false, sellOnArrival = false, noPath = false, daysInDepot = 0,
+    transportVehicleConfig = { vehicles = vec({ { part = { modelId = model }, purchaseTime = bought, maintenanceState = 0.8 } }) },
+    config = { capacities = (function() local t = {} for i = 1, 37 do t[i] = 0 end t[38] = 40 return vec(t) end)() } } } -- passengers last (id 37)
+end
+mkVeh(200, "Bus 1", 7, 1000000); BIG = string.rep("x", 450000); mkVeh(201, "Bus 2", 7, 4000000); mkVeh(202, BIG, 8, 100)
+
+local models = {
+  [7] = { metadata = { transportVehicle = { carrier = 0, compartments = vec({ { loadConfigs = vec({ { cargoEntry = { capacity = 40 } } }) } }),
+          transportModes = vec({ 3 }), comfortFactor = 1, priceFactor = 1, loadSpeed = 2 },
+          description = { name = "City Bus" }, availability = { yearFrom = 1900, yearTo = 1960 },
+          maintenance = { lifespan = 7300, runningCosts = -1 }, cost = { price = -1 },
+          landVehicle = { topSpeed = 15, weightEmpty = 5000, engines = vec({ { power = 90 } }) } } },
+  [8] = { metadata = { transportVehicle = { carrier = 0, compartments = {}, transportModes = {} },
+          description = { name = "Old Bus" }, availability = { yearFrom = 1850, yearTo = 1910 } } },
+  [9] = { metadata = { } }, -- not a vehicle
+}
+local modelNames = { [7] = "vehicle/bus/city.mdl", [8] = "vehicle/bus/old.mdl", [9] = "asset/tree.mdl" }
+
+api = {
+  type = {
+    ComponentType = CT,
+    enum = { Carrier = { ROAD = 0, RAIL = 1 }, TransportVehicleState = { IN_DEPOT = 0, EN_ROUTE = 1 }, TransportMode = { BUS = 3 } },
+    LineProblem = { NOTHING = 0, NO_PATH = 4 },
+    Date = { now = function() return { year = 2026, month = 10, day = 11 } end }, -- real clock, like the game
+    VehiclePart = { new = function() return {} end },
+    TransportVehiclePart = { new = function() return {} end },
+  },
+  util = { getApplicationTime = function() return CLOCK end, getDefaultDayDuration = function() return 2000 end,
+           getDefaultYearDuration = function() return 730000 end, getYearDuration = function(m) return m * 365 end },
+  res = {
+    modelRep = {
+      get = function(id) return models[id] end, getName = function(id) return modelNames[id] end,
+      find = function(n) for id, nm in pairs(modelNames) do if nm == n then return id end end return -1 end,
+      isVisible = function() return true end,
+      forEachModelWithMetadata = function(md, cb) for id, m in pairs(models) do if m.metadata[md] then cb(modelNames[id]) end end end,
+    },
+    cargoTypeRep = { getPassengerCargoTypeId = function() return 37 end,
+      getName = function(i) if i >= 37 then error("Index " .. i .. " out of bounds") end return "::/cargos/c" .. i .. "/c" .. i .. ".cargo" end },
+  },
+  engine = {
+    config = { getModParams = function() return { mcp_bridge_1 = { interval = 1, budget = 1, towns = 1, logEach = 2 } } end },
+    getComponent = function(e, c) return comps[e] and comps[e][c] end,
+    util = {
+      getWorld = function() return 1 end, getCalendarDate = function(gt) return { year = 1925, month = 3, day = 1 } end, getPlayer = function() return 42 end,
+      finance = { calculateBalance = function(list, from, to, only) return list[1] == 100 and 12345 or -500 end,
+                  getPlayersBalance = function() return 9999999 end },
+      vehicle = { getRunningCost = function() return 3000 end, getDepreciatedValue = function() return 20000 end,
+                  getPartPrice = function(p) return p.part.modelId * 1000 end },
+      line = { getLineCapacityUsages = function(l) if l == 100 then return { [37] = { used = 30, capacity = 120 }, [3] = { used = 0, capacity = 0 }, [4] = { used = 0, capacity = 10 } } end return {} end },
+      logbook = { getLogValuePerYear = function(e, n) return #n * 10 end },
+      town = { getTownCapacityUsage = function(t) return vec({ { used = t == 900 and 800 or 200, capacity = 1000 }, { used = 50, capacity = 100 }, { used = 10, capacity = 20 } }) end,
+               getTownLineUsage = function() return 0.3 end,
+               getTownReachability = function() return { commercialPublic = 5, commercialPrivate = 9, industrialPublic = 1, industrialPrivate = 4 } end },
+    },
+    system = {
+      lineSystem = { getLinesForPlayer = function() return vec({ 100, 101 }) end,
+                     getProblemLines = function() return { { 101, 4 } } end },
+      transportVehicleSystem = {
+        getLineVehicles = function(l) if l == 100 then return { 200, 201 } end return { 202 } end,
+        getLineCargoInfo = function() return { frequency = 0.01, totalCapacity = 80 } end,
+      },
+      stationSystem = { getStation2TownMap = function() return { [600] = 900, [601] = 901 } end },
+      townBuildingSystem = { getTown2personCapacitiesMap = function() return { [900] = { 1000, 100, 20 }, [901] = vec({ 300, 30, 0 }) } end },
+      simEntityAtVehicleSystem = { getVehicleSimEntitiesCount = function(v) return 12 end },
+    },
+  },
+}
+CLOCK = 0
+rawget, rawset, rawequal = nil, nil, nil -- absent in the game Lua
+dofile(MOD_ROOT .. "/mcp_bridge/mcp_bridge.script.lua")
+SCRIPT = data()
+''')
+
+script = g.SCRIPT
+for d in ("recordings", "keyframes", "mod_presets"):
+    os.makedirs(os.path.join(out, d))
+
+stop = threading.Event()
+def game_loop():
+    frame = 0
+    while not stop.is_set():
+        g.CLOCK = frame * 0.016
+        script.guiUpdate()
+        frame += 1
+        time.sleep(0.002)
+loop = threading.Thread(target=game_loop, daemon=True)
+loop.start()
+time.sleep(0.3)
+
+spec = importlib.util.spec_from_file_location("srv", os.path.join(ROOT, "server", "tf3_mcp_server.py"))
+srv = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(srv)
+srv.userdata_dirs = lambda: [out]  # look for the hello file in the test folder
+
+checks = []
+exchange = srv.bridge_dir()
+checks.append(("mod_presets chosen", os.path.basename(exchange) == "mod_presets"))
+t0 = time.time()
+snap, warning, age = srv.load_snapshot()
+latency = time.time() - t0
+models, mwarn = srv.load_models()
+srv._cache.clear()
+snap_b, warn_b, _ = srv.load_snapshot()
+stop.set(); loop.join(2)
+
+leftovers = os.listdir(exchange)
+m = snap["meta"]
+lines = {l["id"]: l for l in snap["lines"]}
+snap_ids = srv.answer_ids(exchange, "snapshot")
+manifest = srv.read_lua_data(os.path.join(exchange, "mcp_bridge__snapshot_%d.lua" % snap_ids[0]))
+checks += [
+    ("live answers, no warning", warning is None and mwarn is None and warn_b is None and snap_b["meta"]["requestId"] == manifest["seq"] != m["requestId"]),
+    ("answer in several parts", manifest["parts"] >= 3),
+    ("one request file, one hello", sum(1 for f in leftovers if f.startswith("mcp_bridge__request_")) == 1 and sum(1 for f in leftovers if f.startswith("mcp_bridge__hello")) == 1),
+    ("one snapshot answer kept", len(snap_ids) == 1),
+    ("2 lines", m["lineCount"] == 2 and len(lines) == 2),
+    ("3 vehicles", m["vehicleCount"] == 3),
+    ("date", m["date"] == {"year": 1925, "month": 3, "day": 1}),
+    ("money", m["money"] == 9999999),
+    ("log names discovered", m["lineLogNames"] == ["income", "passengers"]),
+    ("escaped stop name survives", [x["name"] for x in lines[100]["stops"]] == ["Central", 'Harbour "Pier" \\ 1\nb']),
+    ("line A usage 23%", lines[100]["usagePct"] == 23.1),
+    ("usage keeps carried cargo only, short names", set(lines[100]["usage"]) == {"PASSENGERS", "C4"}),
+    ("line A profit", lines[100]["profit12m"] == 12345 and lines[100]["profitPerVehicle12m"] == 6173),
+    ("line A est income", lines[100]["estIncome12m"] == 12345 + 6000),
+    ("line A logs", lines[100]["logsPerYear"] == {"income": 60, "passengers": 100}),
+    ("line B problem", lines[101].get("problem") == "NO_PATH"),
+    ("huge vehicle name intact", lines[101]["vehicles"][0]["name"] == "x" * 450000),
+    ("vehicle model name", lines[100]["vehicles"][0]["units"][0]["name"] == "City Bus"),
+    ("vehicle age", lines[100]["vehicles"][0]["ageDays"] == (5000000 - 1000000) // 2000),
+    ("vehicle capacity", lines[100]["vehicles"][0]["capacity"] == 40 and lines[100]["vehicles"][0]["capacityByCargo"] == {"PASSENGERS": 40}),
+    ("vehicle state", lines[100]["vehicles"][0]["state"] == "EN_ROUTE" and lines[100]["vehicles"][0]["carrier"] == "ROAD"),
+    ("models: 2 vehicle models", models["meta"]["modelCount"] == 2),
+    ("model availability", {x["name"]: x["available"] for x in models["models"]} == {"City Bus": True, "Old Bus": False}),
+    ("model price/speed/power", [(x["price"], x.get("topSpeedKmh"), x.get("powerKw")) for x in models["models"] if x["name"] == "City Bus"] == [(7000, 54, 90)]),
+    ("stop towns (UTF-8)", [x.get("town") for x in lines[100]["stops"]] == ["Springfield", "Zürich"] and lines[100]["towns"] == ["Springfield", "Zürich"]),
+    ("town list", m["townCount"] == 2 and {t["name"]: t["population"] for t in snap["towns"]} == {"Springfield": 800, "Zürich": 200}),
+    ("town size/reach", [(t["size"], t["reachability"]["commercialPublic"], t["developmentActive"]) for t in snap["towns"] if t["id"] == 900] == [(1120, 5, True)]),
+    ("option logEach", sum(1 for x in g.LOG.values() if "answered" in x) >= 2),
+    ("no diagnostics", m["diagnostics"] == {} or m["diagnostics"] == []),
+]
+# fallback: no game loop running -> last answer with a warning
+srv.REQUEST_TIMEOUT_SEC = 1
+srv._cache.clear()
+def fake_request(what, timeout=None):
+    raise TimeoutError(what)
+srv.request = fake_request
+snap2, warning2, age2 = srv.load_snapshot()
+checks.append(("fallback to last answer with warning", snap2["meta"]["requestId"] == snap_b["meta"]["requestId"] and "did not answer" in (warning2 or "")))
+
+for name, ok in checks:
+    print(("PASS " if ok else "FAIL ") + name)
+print("log:", [x for x in g.LOG.values()])
+if not all(ok for _, ok in checks):
+    print("diag:", m.get("diagnostics"))
+    sys.exit(1)
+print("latency %.2f s, parts %d, frames %s, cpu ms %s, out: %s" % (latency, manifest["parts"], m["collectFrames"], m["collectCpuMs"], out))

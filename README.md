@@ -115,6 +115,15 @@ answer and says how old it is.
 - **`--setup`** edits only the `tf3` entry in your app's config. Before its first change, it saves the original
   config as `claude_desktop_config.json.bak-tf3`.
 
+## Development
+
+- `deploy.ps1` copies the mod into the game's `staging_area` folder and generates `_content.json`.
+- `tests/bridge_test.py` runs the real mod Lua against a fake game API and a game-like user data store, while the
+  real server code sends requests and reads the answers. It needs `pip install lupa`.
+- `tests/server_test.py <output>/mod_presets` drives the MCP protocol against the folder the bridge test leaves
+  behind.
+- `tests/parser_check.py` checks the reader for the game's Lua file format.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
