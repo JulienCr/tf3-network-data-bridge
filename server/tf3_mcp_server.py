@@ -560,6 +560,8 @@ def tool_status(args):
         "performance": {
             "slowestFrameMs": meta.get("slowestFrameMs"),
             "slowestIdleCheckMs": meta.get("slowestIdleCheckMs"),
+            "averageIdleCheckMs": meta.get("averageIdleCheckMs"),
+            "slowestFramePhase": meta.get("slowestFramePhase"),
         },
         "collect": {"frames": meta.get("collectFrames"), "cpuMs": meta.get("collectCpuMs")},
         "lineLogNames": meta.get("lineLogNames"),
@@ -923,10 +925,42 @@ def tool_list_depots(args):
     return out
 
 
+JOURNAL_CARRIERS = ["ROAD", "RAIL", "TRAM", "OTHER", "AIR", "WATER"]  # the finance journal's own order
+
+
+def summarize_finance_table(t):
+    """Per carrier and year: income, costs and net from the game's finance table (row codes are undocumented)."""
+    years = t.get("header") or []
+    out = {}
+    for code, rows in (t.get("transportByCarrier") or {}).items():
+        try:
+            name = JOURNAL_CARRIERS[int(code)]
+        except (ValueError, IndexError):
+            name = str(code)
+        income = [0] * len(years)
+        costs = [0] * len(years)
+        for values in (rows or {}).values():
+            for i, v in enumerate((values or [])[:len(years)]):
+                if v >= 0:
+                    income[i] += v
+                else:
+                    costs[i] += v
+        if any(income) or any(costs):
+            out[name] = {"income": income, "costs": costs, "net": [a + b for a, b in zip(income, costs)]}
+    investment = [0] * len(years)
+    for values in (t.get("investment") or {}).values():
+        for i, v in enumerate((values or [])[:len(years)]):
+            investment[i] += v
+    return {"years": years, "byCarrier": out, "construction": investment, "total": t.get("total"),
+            "balance": t.get("balance"), "loan": t.get("loan"), "interest": t.get("interest")}
+
+
 def tool_finances(args):
     data, warning, age = load_kind("finances")
     fin = (data.get("finances") or [{}])[0]
     out = dict(fin)
+    if isinstance(fin.get("financeTable"), dict):
+        out["financeTable"] = summarize_finance_table(fin["financeTable"])
     try:
         snap, _, _ = load_snapshot()
         per = {}
@@ -941,8 +975,9 @@ def tool_finances(args):
     except Exception as e:
         out["linesByCarrier"] = f"unavailable: {e}"
     out["notes"] = ("balance and loan are now; earningsThisYear is since 1 January. linesByCarrier sums your lines' "
-                    "12-month profit (income minus running costs) per carrier. financeTable mirrors the game's "
-                    "finance window (one column per period; layout as the game reports it).")
+                    "12-month profit (income minus running costs) per carrier. financeTable is the game's finance "
+                    "window per year (the current year so far): income, costs and net per carrier, construction "
+                    "spending, total result and balance.")
     out.update(freshness(warning, age))
     return out
 

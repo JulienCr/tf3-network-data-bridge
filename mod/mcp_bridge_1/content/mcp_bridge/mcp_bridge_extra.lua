@@ -152,10 +152,16 @@ end
 local function stationGroup(entry, ctx)
 	local g, stations = entry[1], entry[2]
 	local S = { id = g, name = nameOf(g), stations = #stations }
-	local terminals, used, overflow, pool, termCap, cargoStation = 0, 0, 0, 0, 0, false
+	local terminals, used, overflow, pool, termCap, cargoStation, passengerStation = 0, 0, 0, 0, 0, false, false
 	for _, st in ipairs(stations) do
 		local c = comp(st, CT.STATION)
-		terminals = terminals + size(get(c, "terminals"))
+		local terms = get(c, "terminals")
+		terminals = terminals + size(terms)
+		for k = 1, size(terms) do
+			local t = at(terms, k)
+			if get(t, "cargoLoad") or get(t, "cargoUnload") then cargoStation = true end
+			if get(t, "passengersLoad") or get(t, "passengersUnload") then passengerStation = true end
+		end
 		if S.position == nil then S.position = xy(get(c, "catchmentAreas", 1, "position")) end
 		local u = try("calculateStationUsage", function() return api.engine.util.station.calculateStationUsage(st) end)
 		if u then
@@ -164,12 +170,10 @@ local function stationGroup(entry, ctx)
 			pool = pool + (num(get(u, "poolCapacity")) or 0)
 			termCap = termCap + (num(get(u, "terminalCapacity")) or 0)
 		end
-		if try("isStationOfType", function() return api.engine.util.station.isStationOfType(st, true) end) then
-			cargoStation = true
-		end
 	end
 	S.terminals = terminals
-	S.kind = cargoStation and "cargo" or "passenger"
+	S.kind = (cargoStation and passengerStation) and "mixed" or (cargoStation and "cargo")
+		or (passengerStation and "passenger") or nil
 	S.usage = { used = used, overflow = overflow, poolCapacity = pool, terminalCapacity = termCap }
 	local town = try("getTown", function() return api.engine.system.stationSystem.getTown(stations[1]) end)
 	if town ~= nil then S.town, S.townId = nameOf(town), town end
@@ -184,9 +188,18 @@ local function stationGroup(entry, ctx)
 	end
 	S.lines = lines
 	local waiting, anyWaiting, veryBad = {}, false, {}
+	local stops = toArray(try("getLineStops", function() return api.engine.system.lineSystem.getLineStops(g) end))
 	for _, c in ipairs(cargos) do
-		local n, bad = waitingAt(g, c)
-		if n and n > 0 then
+		local n = 0
+		for _, pair in ipairs(stops) do
+			local line, stopIndex = at(pair, 1), at(pair, 2)
+			n = n + (num(try("getLineStopSimEntitiesCount", function()
+				return api.engine.system.simEntityAtTerminalSystem.getLineStopSimEntitiesCount(line, stopIndex, c)
+			end)) or 0)
+		end
+		local q, bad = waitingAt(g, c)
+		n = math.max(n, q or 0)
+		if n > 0 then
 			waiting[cargoName(c)], anyWaiting = n, true
 			if bad then veryBad[#veryBad + 1] = cargoName(c) end
 		end
@@ -199,7 +212,14 @@ end
 local function depot(d, ctx)
 	local c = comp(d, CT.VEHICLE_DEPOT)
 	local D = { id = d, name = nameOf(d) }
-	D.carrier = collect.carrierName and collect.carrierName(get(c, "carrier")) or nil
+	local modes = {}
+	eachPair(get(c, "transportModes"), function(mode, on)
+		if on then modes[#modes + 1] = collect.modeName(mode) end
+	end)
+	local m = table.concat(modes, ",")
+	D.carrier = (m:find("TRAM") and "TRAM") or (m:find("TRAIN") and "RAIL") or ((m:find("SHIP")) and "WATER")
+		or ((m:find("AIRCRAFT") or m:find("HELICOPTER")) and "AIR") or ((m:find("BUS") or m:find("TRUCK")) and "ROAD")
+		or collect.carrierName(get(c, "carrier"))
 	D.position = xy(get(c, "catchmentArea", "position")) or positionOf(d)
 	D.vehiclesInside = size(try("getDepotVehicles", function()
 		return api.engine.system.transportVehicleSystem.getDepotVehicles(d)
@@ -284,7 +304,7 @@ local function finances(_, ctx)
 		local carriers = {}
 		pcall(function()
 			fd:foreach_carrier(function(carrier, map)
-				carriers[collect.carrierName(carrier) or tostring(carrier)] = plain(map)
+				carriers[tostring(carrier)] = plain(map)
 			end)
 		end)
 		t.transportByCarrier = carriers

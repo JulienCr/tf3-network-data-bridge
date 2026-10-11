@@ -102,6 +102,7 @@ local MODES = { "PERSON", "CARGO", "CAR", "BUS", "TRUCK", "TRAM", "ELECTRIC_TRAM
 	"AIRCRAFT", "SHIP", "SMALL_AIRCRAFT", "SMALL_SHIP", "HELICOPTER" }
 
 function M.carrierName(v) return enumName("Carrier", CARRIERS, v) end
+M.modeName = function(v) return modeName(v) end
 local function stateName(v) return enumName("TransportVehicleState", STATES, v) end
 local function modeName(v) return enumName("TransportMode", MODES, v) end
 
@@ -109,8 +110,11 @@ local function nameOf(entity)
 	local ok, c = pcall(api.engine.getComponent, entity, api.type.ComponentType.NAME)
 	if ok and c ~= nil then
 		local okN, n = pcall(function() return c.name end)
-		if okN then return n end
+		if okN and n ~= nil and n ~= "" then return n end
 	end
+	-- industries, depots and others without a NAME component: the name the game computes for them
+	local okE, n = pcall(function() return api.engine.util.getEntityName(entity) end)
+	if okE and type(n) == "string" and n ~= "" then return n end
 	return nil
 end
 

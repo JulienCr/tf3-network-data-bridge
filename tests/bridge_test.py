@@ -88,9 +88,9 @@ local comps = {
   [711] = { [CT.CONSTRUCTION] = { fileName = "industry/steel_mill.con" },
             [CT.BOUNDING_VOLUME] = { bbox = { min = { x = 15990, y = 2990 }, max = { x = 16010, y = 3010 } } } },
   -- stations and a depot
-  [600] = { [CT.STATION] = { terminals = vec({ {}, {} }), catchmentAreas = { { position = { x = 1000, y = 2050 } } } } },
-  [601] = { [CT.STATION] = { terminals = { {} }, catchmentAreas = { { position = { x = 21000, y = 2050 } } } } },
-  [800] = { [CT.NAME] = { name = "Bus Depot" }, [CT.VEHICLE_DEPOT] = { carrier = 0, catchmentArea = { position = { x = 1100, y = 2100 } } } },
+  [600] = { [CT.STATION] = { terminals = vec({ { passengersLoad = true }, { passengersUnload = true } }), catchmentAreas = { { position = { x = 1000, y = 2050 } } } } },
+  [601] = { [CT.STATION] = { terminals = { { passengersLoad = true, cargoLoad = true } }, catchmentAreas = { { position = { x = 21000, y = 2050 } } } } },
+  [800] = { [CT.VEHICLE_DEPOT] = { carrier = 0, transportModes = { [3] = true }, catchmentArea = { position = { x = 1100, y = 2100 } } } },
   [42] = { [CT.ACCOUNT] = { balance = 9999999, loan = 250000 } },
 }
 local function mkVeh(id, name, model, bought)
@@ -153,11 +153,11 @@ api = {
       return {}
     end,
     util = {
-      getWorld = function() return 1 end, getCalendarDate = function(gt) return { year = 1925, month = 3, day = 1 } end, getPlayer = function() return 42 end,
+      getWorld = function() return 1 end, getEntityName = function(e) return e == 800 and "Bus Depot" or nil end, getCalendarDate = function(gt) return { year = 1925, month = 3, day = 1 } end, getPlayer = function() return 42 end,
       finance = { calculateBalance = function(list, from, to, only) return list[1] == 100 and 12345 or -500 end,
                   getPlayersBalance = function() return 9999999 end, calculateEarnings = function() return 777 end,
                   computeFinanceTable = function(p, cfg) return { header = { "1924", "1925" }, total = vec({ 10, 20 }),
-                    foreach_carrier = function(self, fn) fn(0, { [1] = vec({ 5, 6 }) }) end } end },
+                    foreach_carrier = function(self, fn) fn(0, { [526] = vec({ 9, 7 }), [406] = vec({ -4, -1 }) }) end } end },
       headquarters = { getCompaniesValue = function() return { totalScore = 12, numberOfLines = 2, balance = 9999999 } end,
                        getTransportedData = function() return { passengersTransported = 5000, cargoTransported = 300 } end },
       stock = { getInputsOutputsFromRules = function(sl) return { STOCK[sl][1], STOCK[sl][2] } end,
@@ -182,6 +182,7 @@ api = {
     system = {
       lineSystem = { getLinesForPlayer = function() return vec({ 100, 101 }) end,
                      getLinesForStationGroup = function(g) return { 100 } end,
+                     getLineStops = function(g) return { { 100, g == 500 and 0 or 1 } } end,
                      getProblemLines = function() return { { 101, 4 } } end },
       transportVehicleSystem = {
         getLineVehicles = function(l) if l == 100 then return { 200, 201 } end return { 202 } end,
@@ -196,6 +197,7 @@ api = {
         getTown2BuildingMap = function() return { [900] = vec({ 1000, 1001 }), [901] = { 1002 } } end,
         getCargoSupplyAndLimit = function(t) if t == 900 then return { [4] = { 5, 10, 0 } } end return {} end },
       simEntityAtVehicleSystem = { getVehicleSimEntitiesCount = function(v) return 12 end },
+      simEntityAtTerminalSystem = { getLineStopSimEntitiesCount = function(l, stop, c) return (stop == 0 and c == 37) and 40 or 0 end },
     },
   },
 }
@@ -302,12 +304,13 @@ extra_checks = [
                         and srv.tool_list_industries({"cargo": "c6"})["totalMatching"] == 1),
     ("stations", [(x["name"], x.get("waitingTotal"), x["terminals"], x["town"], x["usagePct"]) for x in st["stations"]]
                  == [("Central", 42, 2, "Springfield", 30.0), ('Harbour "Pier" \\ 1\nb', 0, 1, "Zürich", 30.0)]
-                 and st["stations"][0]["longWaits"] == ["PASSENGERS"] and st["stations"][0]["lines"] == ["Line A"]),
+                 and st["stations"][0]["longWaits"] == ["PASSENGERS"] and st["stations"][0]["lines"] == ["Line A"]
+                 and [x["kind"] for x in st["stations"]] == ["passenger", "mixed"]),
     ("depots", dep["depots"] == [{"id": 800, "name": "Bus Depot", "carrier": "ROAD", "position": {"x": 1100, "y": 2100},
                                   "vehiclesInside": 2, "nearestTown": {"name": "Springfield", "distanceKm": 0.1}}]),
     ("finances", fin["balance"] == 9999999 and fin["loan"] == 250000 and fin["earningsThisYear"] == 777
                  and fin["company"]["totalScore"] == 12 and fin["transported"] == {"passengers": 5000, "cargo": 300}
-                 and fin["financeTable"]["header"] == ["1924", "1925"] and fin["financeTable"]["transportByCarrier"] == {"ROAD": [[5, 6]]}
+                 and fin["financeTable"]["years"] == ["1924", "1925"] and fin["financeTable"]["byCarrier"] == {"ROAD": {"income": [9, 7], "costs": [-4, -1], "net": [5, 6]}}
                  and fin["linesByCarrier"]["ROAD"]["profit12m"] == 11845),
     ("live vehicles", live["line"] == "Line A" and [(v["id"], v["position"], v["stopIndex"], v["load"]) for v in live["vehicles"]]
                       == [(200, {"x": 2000, "y": 2000}, 1, 12), (201, {"x": 2010, "y": 2000}, 0, 12)]),

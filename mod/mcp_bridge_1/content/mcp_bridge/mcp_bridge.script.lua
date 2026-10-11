@@ -67,6 +67,9 @@ local G = {
 	queue = {}, -- pending requests: what -> id
 	jobMaxMs = 0, -- slowest frame of the current request (collect, encode and write)
 	pollMaxMs = 0, -- slowest idle check of the request file since the last answer
+	pollMs = 0, -- total time of the idle checks since the last answer (for the average)
+	pollCount = 0,
+	jobMaxPhase = nil, -- the step that took the slowest frame
 }
 
 local function appTime()
@@ -154,7 +157,9 @@ local function poll()
 	G.nextPoll = now + POLL_SEC
 	local t0 = os.clock()
 	local req = tryLoad(G.dir, G.request)
-	G.pollMaxMs = math.max(G.pollMaxMs, (os.clock() - t0) * 1000)
+	local pollMs = (os.clock() - t0) * 1000
+	G.pollMaxMs = math.max(G.pollMaxMs, pollMs)
+	G.pollMs, G.pollCount = G.pollMs + pollMs, G.pollCount + 1
 	if req == nil then
 		G.nextPoll = now + 10 -- missing or being rewritten; each failed load logs an error, so retry slowly
 		return
@@ -200,7 +205,7 @@ local function stepFlush(deadline)
 	end
 	G.failures = 0
 	G.flush = nil
-	G.jobMaxMs, G.pollMaxMs = 0, 0
+	G.jobMaxMs, G.pollMaxMs, G.pollMs, G.pollCount, G.jobMaxPhase = 0, 0, 0, 0, nil
 	G.phase = "idle"
 end
 
@@ -272,6 +277,8 @@ local function encodeSnapshot()
 		collectCpuMs = math.floor(ctx.cpu * 1000 + 0.5),
 		slowestFrameMs = math.floor(G.jobMaxMs * 10 + 0.5) / 10,
 		slowestIdleCheckMs = math.floor(G.pollMaxMs * 100 + 0.5) / 100,
+		averageIdleCheckMs = G.pollCount > 0 and math.floor(G.pollMs / G.pollCount * 100 + 0.5) / 100 or nil,
+		slowestFramePhase = G.jobMaxPhase,
 		lineLogNames = ctx.logNames,
 		writtenAtUnix = os.time and os.time() or nil,
 		diagnostics = collect.diag,
@@ -361,6 +368,7 @@ end
 local function step()
 	if G.phase == "init" then init(); return end
 	local t0 = os.clock()
+	local startPhase = G.phase
 	if G.phase == "idle" then
 		poll()
 		local what, id = nextRequest()
@@ -381,7 +389,7 @@ local function step()
 	if G.phase == "job" and os.clock() < deadline then stepJob(deadline) end
 	if G.phase == "flush" and os.clock() < deadline then stepFlush(deadline) end
 	local ms = (os.clock() - t0) * 1000
-	G.jobMaxMs = math.max(G.jobMaxMs, ms)
+	if ms > G.jobMaxMs then G.jobMaxMs, G.jobMaxPhase = ms, (startPhase == "idle" and "start " or "") .. G.phase end
 	local busy = G.ctx or (G.job and G.job.ctx) -- still collecting
 	if busy then
 		busy.cpu = busy.cpu + ms / 1000
