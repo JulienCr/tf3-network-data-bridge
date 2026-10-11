@@ -129,6 +129,9 @@ local function cargoName(id)
 		else
 			local ok, name = pcall(function() return api.res.cargoTypeRep.getName(id) end)
 			n = (ok and type(name) == "string" and name ~= "") and name or ("cargo " .. tostring(id))
+			-- the game gives the resource path ("::/cargos/iron_ore/iron_ore.cargo"); keep "IRON_ORE"
+			local short = n:match("([^/]+)%.cargo$")
+			if short then n = short:upper() end
 		end
 		cargoNames[id] = n
 	end
@@ -421,7 +424,8 @@ function M.line(id, ctx)
 		function(cargo, u)
 			local uu = num(try("usage.used", function() return u.used end)) or 0
 			local uc = num(try("usage.capacity", function() return u.capacity end)) or 0
-			usage[cargoName(cargo)] = { used = uu, capacity = uc }
+			-- the game lists every cargo type; only the ones this line carries are kept
+			if uu > 0 or uc > 0 then usage[cargoName(cargo)] = { used = uu, capacity = uc } end
 			used, cap = used + uu, cap + uc
 			if firstCargo == nil then firstCargo = cargo end
 		end)
