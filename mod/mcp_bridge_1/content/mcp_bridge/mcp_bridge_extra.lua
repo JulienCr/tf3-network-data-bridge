@@ -129,14 +129,20 @@ M.jobs.industries = {
 ---------------------------------------------------------------------------------------------------------------------
 -- stations (per station group) and depots
 
+-- cargo ids a line carries, from its vehicles' capacities (indexed by cargo id + 1)
 local function lineCargos(line, ctx)
 	local cached = ctx.lineCargo[line]
 	if cached then return cached end
-	local out = {}
-	eachPair(try("getLineCapacityUsages", function() return api.engine.util.line.getLineCapacityUsages(line, false) end),
-		function(c, u)
-			if (num(get(u, "capacity")) or 0) > 0 or (num(get(u, "used")) or 0) > 0 then out[#out + 1] = c end
-		end)
+	local set, out = {}, {}
+	for _, v in ipairs(toArray(try("getLineVehicles", function()
+		return api.engine.system.transportVehicleSystem.getLineVehicles(line)
+	end))) do
+		local caps = get(comp(v, CT.TRANSPORT_VEHICLE), "config", "capacities")
+		for i = 1, size(caps) do
+			if (num(at(caps, i)) or 0) > 0 and not set[i - 1] then set[i - 1], out[#out + 1] = true, i - 1 end
+		end
+	end
+	table.sort(out)
 	ctx.lineCargo[line] = out
 	return out
 end

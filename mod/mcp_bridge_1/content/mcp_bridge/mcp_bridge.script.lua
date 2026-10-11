@@ -8,8 +8,9 @@
 -- access) replaces the request and cleans up old answers. Files "<name>.lua" in that folder:
 --   mcp_bridge__hello_<stamp>          written at load: bridge version; the server finds the folder by it
 --   mcp_bridge__request_<stamp>        created here once per load (a new name: the game refuses names it has seen),
---                                       then rewritten by the server: { id = <number>, what = ... }; read twice a
---                                       second, a new id is a new request (what: one of KINDS)
+--                                       then rewritten by the server: { id = <number>, what = ... }; read every
+--                                       3 s (twice a second for 2 minutes after a request); a new id is a new
+--                                       request (what: one of KINDS)
 --   mcp_bridge__<what>_<id>_p1 .. _pN   the answer as JSON split in parts: { seq = id, part = i, data = "<json>" }
 --   mcp_bridge__<what>_<id>             written last: { seq = id, what = what, parts = N, bytes = <length> }
 -- Collecting and writing are sliced: each frame spends at most the "budget" setting in CPU time.
@@ -23,7 +24,9 @@ local VERSION = 5
 local USERDATA_DIRS = { "mod_presets", "recordings", "keyframes" }
 local PREFIX = "mcp_bridge__"
 local PART_CHARS = 200000
-local POLL_SEC = 0.5
+local POLL_SEC = 0.5 -- while requests are coming in
+local POLL_IDLE_SEC = 3 -- otherwise: each check of the request file costs a few ms, so it is rare when nobody asks
+local ACTIVE_SEC = 120 -- how long after a request the fast checks continue
 -- request kinds, in the order queued requests are served
 local KINDS = { "snapshot", "models", "industries", "stations", "finances", "vehicles" }
 local KNOWN = {}
@@ -154,7 +157,7 @@ end
 local function poll()
 	local now = appTime()
 	if now < G.nextPoll then return end
-	G.nextPoll = now + POLL_SEC
+	G.nextPoll = now + ((now - (G.lastRequestAt or -1e9) < ACTIVE_SEC) and POLL_SEC or POLL_IDLE_SEC)
 	local t0 = os.clock()
 	local req = tryLoad(G.dir, G.request)
 	local pollMs = (os.clock() - t0) * 1000
@@ -167,6 +170,7 @@ local function poll()
 	local id, what = tonumber(field(req, "id")), field(req, "what")
 	if id == nil or id == 0 or id == G.lastId then return end
 	G.lastId = id
+	G.lastRequestAt = now
 	if not KNOWN[what] then what = "snapshot" end
 	if not G.sawRequest then
 		say("first request received: " .. what .. " " .. tostring(id))

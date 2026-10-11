@@ -30,6 +30,13 @@ It has two parts:
 - **Finances:** balance, loan, earnings, company value and the finance table per carrier.
 - **Vehicle models you can buy this year:** price, capacity, top speed, power and lifespan.
 
+## Example
+
+A long-term rail plan an AI app drew from a save's live data: each town's position and population, the existing
+lines and the vehicles available.
+
+<p align="center"><img src="docs/example-rail-plan.png" alt="Example rail plan drawn from live game data" width="720"></p>
+
 ## Setup
 
 You need Transport Fever 3 on Windows, [Python 3.8 or newer](https://www.python.org/downloads/) and an AI app that
@@ -98,12 +105,12 @@ Script mods can't open files or network connections, so the server and the mod e
 game's own user data functions, in the game's `mod_presets` folder:
 
 1. When a save loads, the mod writes `mcp_bridge__hello_<stamp>.lua` and `mcp_bridge__request_<stamp>.lua`.
-2. On each tool call, the server writes a new request id into the request file. The mod checks that file twice a
-   second.
+2. On each tool call, the server writes a new request id into the request file. The mod checks that file every
+   3 seconds, and twice a second for two minutes after a request, so follow-up questions are answered quickly.
 3. The mod collects the data over a few frames and writes the answer as JSON split across `mcp_bridge__*` files. The
    server reads the answer and deletes old files.
 
-A request usually takes well under a second. Several tool calls in one reply share a single answer. If the game
+The first request after a quiet spell takes up to about 3 seconds, later ones well under a second. Several tool calls in one reply share a single answer. If the game
 doesn't answer within 20 seconds, for example because it's paused in a menu or loading, the server shows the last
 answer and says how old it is.
 

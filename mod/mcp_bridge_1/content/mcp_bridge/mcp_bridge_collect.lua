@@ -346,6 +346,7 @@ function M.vehicle(v, ctx)
 		if c > 0 then
 			capacity = capacity + c
 			byCargo[cargoName(i - 1)] = c
+			if ctx.cargoIds then ctx.cargoIds[i - 1] = true end
 		end
 	end
 	V.capacity = capacity
@@ -401,6 +402,7 @@ function M.line(id, ctx)
 	local vehicles, carriers = {}, {}
 	local running, value, loadNow, capNow = 0, 0, 0, 0
 	local list = try("getLineVehicles", function() return api.engine.system.transportVehicleSystem.getLineVehicles(id) end)
+	ctx.cargoIds = {} -- cargo the line's vehicles can carry (filled by M.vehicle)
 	for i = 1, size(list) do
 		local V = M.vehicle(at(list, i), ctx)
 		vehicles[#vehicles + 1] = V
@@ -421,19 +423,23 @@ function M.line(id, ctx)
 	L.loadNow = loadNow
 	L.capacityNow = capNow
 
-	-- capacity used over recent trips, per cargo (what the line window shows as usage)
-	local usage, used, cap = {}, 0, 0
-	local firstCargo = nil
+	-- cargo the line carries, from its vehicles' capacities (cargo ids verified in game)
+	local cargoIds, cargoNamesList = {}, {}
+	for c in pairs(ctx.cargoIds) do cargoIds[#cargoIds + 1] = c end
+	table.sort(cargoIds)
+	for _, c in ipairs(cargoIds) do cargoNamesList[#cargoNamesList + 1] = cargoName(c) end
+	L.cargos = cargoNamesList
+	local firstCargo = cargoIds[1]
+
+	-- capacity used over recent trips (what the line window shows as usage). The game's per-cargo keys do not match
+	-- cargo ids in this build (a passenger line came out as GRAIN), so only the total is used.
+	local used, cap = 0, 0
 	eachPair(try("getLineCapacityUsages", function() return api.engine.util.line.getLineCapacityUsages(id, false) end),
-		function(cargo, u)
-			local uu = num(try("usage.used", function() return u.used end)) or 0
-			local uc = num(try("usage.capacity", function() return u.capacity end)) or 0
-			-- the game lists every cargo type; only the ones this line carries are kept
-			if uu > 0 or uc > 0 then usage[cargoName(cargo)] = { used = uu, capacity = uc } end
-			used, cap = used + uu, cap + uc
-			if firstCargo == nil then firstCargo = cargo end
+		function(_, u)
+			used = used + (num(try("usage.used", function() return u.used end)) or 0)
+			cap = cap + (num(try("usage.capacity", function() return u.capacity end)) or 0)
 		end)
-	L.usage = usage
+	L.usage = { used = used, capacity = cap }
 	if cap > 0 then L.usagePct = math.floor(used / cap * 1000 + 0.5) / 10 end
 
 	if firstCargo ~= nil then

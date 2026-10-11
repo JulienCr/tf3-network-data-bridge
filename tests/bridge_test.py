@@ -265,7 +265,7 @@ checks += [
     ("log names discovered", m["lineLogNames"] == ["income", "passengers"]),
     ("escaped stop name survives", [x["name"] for x in lines[100]["stops"]] == ["Central", 'Harbour "Pier" \\ 1\nb']),
     ("line A usage 23%", lines[100]["usagePct"] == 23.1),
-    ("usage keeps carried cargo only, short names", set(lines[100]["usage"]) == {"PASSENGERS", "C4"}),
+    ("line cargo from vehicles, usage total", lines[100]["cargos"] == ["PASSENGERS"] and lines[100]["usage"] == {"used": 30, "capacity": 130}),
     ("line A profit", lines[100]["profit12m"] == 12345 and lines[100]["profitPerVehicle12m"] == 6173),
     ("line A est income", lines[100]["estIncome12m"] == 12345 + 6000),
     ("line A logs", lines[100]["logsPerYear"] == {"income": 60, "passengers": 100}),

@@ -498,6 +498,7 @@ def line_row(l):
         "id": l.get("id"),
         "name": l.get("name"),
         "carriers": l.get("carriers") or [],  # an empty Lua table arrives as {}
+        "cargos": l.get("cargos") or None,
         "towns": l.get("towns") or None,
         "stops": len(l.get("stops") or []),
         "vehicles": l.get("vehicleCount"),
