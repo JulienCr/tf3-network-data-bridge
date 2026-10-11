@@ -98,10 +98,20 @@ answer and says how old it is.
 - **Optional environment variables:** `TF3_MCP_BRIDGE_DIR` sets the exchange folder, and `TF3_MCP_TIMEOUT` changes
   the wait in seconds.
 
-## Privacy
+## Privacy and security
 
-Everything stays on your PC. The mod and the server only read game data and exchange local files. Your AI app sends
-the tool results to its AI service like any other conversation content.
+- **Everything stays on your PC.** The mod and the server only read game data and exchange local files. Neither one
+  opens a network connection. Your AI app sends the tool results to its AI service, like any other conversation
+  content.
+- **Read-only.** The mod contains no code that changes your game, such as building, buying or selling. A request can
+  only ask for one of two kinds of data.
+- **Files it touches.** The server writes one request file and deletes only `mcp_bridge__*` files, and only in the
+  exchange folder. The game loads the request file as Lua, the same way it loads any user data file. So anything able
+  to write to your user data folder could already change the game in other ways, and the bridge adds no new risk.
+- **Names in the results.** Line, station and town names in the tool results come from your save. In a save from
+  someone else, treat them as untrusted text.
+- **`--setup`** edits only the `tf3` entry in your app's config. Before its first change, it saves the original
+  config as `claude_desktop_config.json.bak-tf3`.
 
 ## License
 

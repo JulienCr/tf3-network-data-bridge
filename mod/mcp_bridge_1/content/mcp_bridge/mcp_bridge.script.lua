@@ -60,6 +60,8 @@ local G = {
 	nextPoll = 0,
 	failures = 0,
 	queue = {}, -- pending requests: what -> id
+	jobMaxMs = 0, -- slowest frame of the current request (collect, encode and write)
+	pollMaxMs = 0, -- slowest idle check of the request file since the last answer
 }
 
 local function appTime()
@@ -138,7 +140,9 @@ local function poll()
 	local now = appTime()
 	if now < G.nextPoll then return end
 	G.nextPoll = now + POLL_SEC
+	local t0 = os.clock()
 	local req = tryLoad(G.dir, G.request)
+	G.pollMaxMs = math.max(G.pollMaxMs, (os.clock() - t0) * 1000)
 	if req == nil then
 		G.nextPoll = now + 10 -- missing or being rewritten; each failed load logs an error, so retry slowly
 		return
@@ -177,12 +181,14 @@ local function stepFlush(deadline)
 	local ok, err = trySave(G.dir, f.base, { seq = f.id, what = f.what, parts = #f.parts, bytes = f.bytes })
 	if not ok then error("saving the " .. f.what .. " manifest failed: " .. tostring(err)) end
 	if not G.announced or opt("logEach") then
-		say(string.format("answered %s request %s: %d bytes in %d parts, slowest part %.1f ms%s", f.what, tostring(f.id),
-			f.bytes, #f.parts, f.maxMs, f.note or ""))
+		say(string.format("answered %s request %s: %d bytes in %d parts, slowest part %.1f ms, slowest frame %.1f ms, "
+			.. "slowest idle check %.2f ms%s", f.what, tostring(f.id), f.bytes, #f.parts, f.maxMs,
+			math.max(G.jobMaxMs, f.maxMs), G.pollMaxMs, f.note or ""))
 		G.announced = true
 	end
 	G.failures = 0
 	G.flush = nil
+	G.jobMaxMs, G.pollMaxMs = 0, 0
 	G.phase = "idle"
 end
 
@@ -252,6 +258,8 @@ local function encodeSnapshot()
 		townCount = #ctx.townChunks,
 		collectFrames = ctx.frames,
 		collectCpuMs = math.floor(ctx.cpu * 1000 + 0.5),
+		slowestFrameMs = math.floor(G.jobMaxMs * 10 + 0.5) / 10,
+		slowestIdleCheckMs = math.floor(G.pollMaxMs * 100 + 0.5) / 100,
 		lineLogNames = ctx.logNames,
 		writtenAtUnix = os.time and os.time() or nil,
 		diagnostics = collect.diag,
@@ -290,6 +298,7 @@ end
 
 local function step()
 	if G.phase == "init" then init(); return end
+	local t0 = os.clock()
 	if G.phase == "idle" then
 		poll()
 		if G.queue.snapshot then
@@ -304,15 +313,16 @@ local function step()
 			return
 		end
 	end
-	local t0 = os.clock()
-	local deadline = t0 + opt("budget")
+	local deadline = os.clock() + opt("budget")
 	if G.phase == "lines" then stepLines(deadline) end
 	if G.phase == "towns" and os.clock() < deadline then stepTowns(deadline) end
 	if G.phase == "encode" and os.clock() < deadline then encodeSnapshot() end
 	if G.phase == "models" and os.clock() < deadline then stepModels(deadline) end
 	if G.phase == "flush" and os.clock() < deadline then stepFlush(deadline) end
+	local ms = (os.clock() - t0) * 1000
+	G.jobMaxMs = math.max(G.jobMaxMs, ms)
 	if G.ctx then -- still collecting
-		G.ctx.cpu = G.ctx.cpu + (os.clock() - t0)
+		G.ctx.cpu = G.ctx.cpu + ms / 1000
 		G.ctx.frames = G.ctx.frames + 1
 	end
 end

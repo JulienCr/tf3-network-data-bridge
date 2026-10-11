@@ -326,7 +326,7 @@ def read_answer(folder, what, rid):
             chunks.append(part.get("data") or b"")
         age = time.time() - os.path.getmtime(base + ".lua")
         return json.loads(b"".join(chunks).decode("utf-8")), age
-    except (OSError, ValueError, AttributeError, TypeError):
+    except Exception:  # incomplete, being written or malformed
         return None
 
 
@@ -536,6 +536,10 @@ def tool_status(args):
         "towns": meta.get("townCount"),
         "exchangeFolder": bridge_dir(),
         "vehicleModels": cached_models[0].get("meta", {}).get("modelCount") if cached_models else None,
+        "performance": {
+            "slowestFrameMs": meta.get("slowestFrameMs"),
+            "slowestIdleCheckMs": meta.get("slowestIdleCheckMs"),
+        },
         "collect": {"frames": meta.get("collectFrames"), "cpuMs": meta.get("collectCpuMs")},
         "lineLogNames": meta.get("lineLogNames"),
         "diagnostics": meta.get("diagnostics") or None,
@@ -568,7 +572,7 @@ def tool_list_lines(args):
         lines.sort(key=lambda l: (l.get("name") or "").lower(), reverse=desc)
     else:
         lines.sort(key=lambda l: (l.get(key) is None, -(l.get(key) or 0) if desc else (l.get(key) or 0)))
-    limit = int(args.get("limit") or 50)
+    limit = max(1, min(int(args.get("limit") or 50), 1000))
     out = {
         "totalMatching": len(lines),
         "lines": [compact(line_row(l)) for l in lines[:limit]],
@@ -615,7 +619,7 @@ def tool_list_vehicle_models(args):
         items = [m for m in items if (m.get("capacity") or 0) >= int(args["min_capacity"])]
     key = args.get("sort_by") or "capacity"
     items.sort(key=lambda m: (m.get(key) is None, -(m.get(key) or 0) if isinstance(m.get(key), (int, float)) else 0))
-    limit = int(args.get("limit") or 60)
+    limit = max(1, min(int(args.get("limit") or 60), 1000))
     fields = ("id", "name", "carrier", "transportModes", "capacity", "topSpeedKmh", "powerKw", "price",
               "lifespanDays", "yearFrom", "yearTo", "comfortFactor", "loadSpeed", "weightEmptyKg", "file")
     rows = [compact({f: m.get(f) for f in fields}) for m in items[:limit]]
@@ -672,7 +676,7 @@ def tool_list_towns(args):
     else:
         asc = bool(args.get("ascending"))
         rows.sort(key=lambda r: (r.get(key) is None, (r.get(key) or 0) if asc else -(r.get(key) or 0)))
-    limit = int(args.get("limit") or 100)
+    limit = max(1, min(int(args.get("limit") or 100), 1000))
     out = {
         "totalMatching": len(rows),
         "towns": rows[:limit],
@@ -722,7 +726,7 @@ def tool_fleet_issues(args):
                 row["lineId"] = l.get("id")
                 row["reasons"] = vr
                 vehicles_out.append(row)
-    limit = int(args.get("limit") or 100)
+    limit = max(1, min(int(args.get("limit") or 100), 1000))
     out = {
         "lines": lines_out[:limit],
         "linesFlagged": len(lines_out),
@@ -927,7 +931,8 @@ def setup():
                 print("Claude desktop: could not read", path, "(not valid JSON); add the entry below by hand")
                 continue
             backup = path + ".bak-tf3"
-            shutil.copyfile(path, backup)
+            if not os.path.exists(backup):  # keep the config from before the first setup
+                shutil.copyfile(path, backup)
         config.setdefault("mcpServers", {})["tf3"] = entry
         with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
